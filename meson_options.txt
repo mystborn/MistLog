@@ -1,0 +1,3 @@
+option('build_examples', type: 'boolean', description: 'Determines if the example projects are built.', value: false)
+option('build_test', type: 'boolean', description: 'Determines if the test projects are built. Only matters if check_location is not set.', value: false)
+option('check_location', type: 'string', description: 'The location of the check unit testing library used to build/run the test project.', value: '')

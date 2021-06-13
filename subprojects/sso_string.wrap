@@ -1,0 +1,6 @@
+[wrap-git]
+
+directory = sso_string
+url = https://github.com/mystborn/sso_string.git
+revision = master
+clone-recursive = true

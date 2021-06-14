@@ -139,7 +139,7 @@ static bool log_format_message(enum LogLevel log_level, const char* file, const 
     return result != NULL;
 }
 
-bool ___log_format_read_arg_name(char* text, size_t* start, size_t count, String* name) {
+LOG_EXPORT bool ___log_format_read_arg_name(char* text, size_t* start, size_t count, String* name) {
     for(size_t iter = 0; iter < count; iter++) {
         if(iter + 1 < count && text[*start] == '\\') {
             switch(text[*start + 1]) {
@@ -180,7 +180,7 @@ bool ___log_format_read_arg_name(char* text, size_t* start, size_t count, String
     return true;
 }
 
-bool ___log_format_read_arg_value(char* text, size_t* start, size_t count, bool as_format, String* value, struct LogFormat** format) {
+LOG_EXPORT bool ___log_format_read_arg_value(char* text, size_t* start, size_t count, bool as_format, String* value, struct LogFormat** format) {
     if(as_format) {
         *format = ___log_parse_format(text, *start, count);
         if(!(*format))
@@ -496,7 +496,7 @@ static bool log_format_finder_init() {
         return false;
 }
 
-bool ___log_register_log_format_creator(const char* name, struct LogLayoutRenderer* (*create)(char* text, size_t start, size_t count, void* ctx), void* ctx, void (*free)(void* ctx)) {
+LOG_EXPORT bool ___log_register_log_format_creator(const char* name, struct LogLayoutRenderer* (*create)(char* text, size_t start, size_t count, void* ctx), void* ctx, void (*free)(void* ctx)) {
     struct LogLayoutRendererCreator* creator = malloc(sizeof(*creator));
     if(!creator)
         return false;
@@ -685,7 +685,7 @@ struct LogFormat* ___log_parse_format(char* format, size_t start, size_t count) 
         return NULL;
 }
 
-bool ___log_format(struct LogFormat* log_format, enum LogLevel level, const char* file, const char* function, uint32_t line, String* message, char* format_string, va_list args) {
+LOG_EXPORT bool ___log_format(struct LogFormat* log_format, enum LogLevel level, const char* file, const char* function, uint32_t line, String* message, char* format_string, va_list args) {
     for(int i = 0; i < log_format->step_count; i++) {
         struct LogLayoutRenderer* step = log_format->steps[i];
         if(!step->append(level, file, function, line, message, step->ctx, format_string, args)) {
@@ -697,7 +697,7 @@ bool ___log_format(struct LogFormat* log_format, enum LogLevel level, const char
     return true;
 }
 
-Logger* log_logger_create() {
+LOG_EXPORT Logger* log_logger_create() {
     Logger* logger = calloc(1, sizeof(*logger));
     if(!logger)
         return NULL;
@@ -705,7 +705,7 @@ Logger* log_logger_create() {
     return logger;
 }
 
-void log_logger_free(Logger* logger) {
+LOG_EXPORT void log_logger_free(Logger* logger) {
     for(int i = 0; i < logger->target_count; i++) {
         log_target_free(logger->targets[i]);
     }
@@ -713,7 +713,7 @@ void log_logger_free(Logger* logger) {
     free(logger);
 }
 
-static ___log_console_log(String* msg, void* ctx) {
+static void ___log_console_log(enum LogLevel log_level, const char* file, const char* function, uint32_t line, String* msg, void* ctx) {
     puts(string_data(msg));
 }
 
@@ -738,7 +738,7 @@ LogTarget* log_target_console_create(const char* layout, enum LogLevel min_level
     return target;
 }
 
-void log_target_free(LogTarget* target) {
+LOG_EXPORT void log_target_free(LogTarget* target) {
     if(!target)
         return;
 
@@ -758,7 +758,7 @@ void log_target_free(LogTarget* target) {
     free(target);
 }
 
-bool log_add_target(Logger* logger, LogTarget* target) {
+LOG_EXPORT bool log_add_target(Logger* logger, LogTarget* target) {
     if(!logger)
         return false;
     
@@ -776,7 +776,7 @@ bool log_add_target(Logger* logger, LogTarget* target) {
     return true;
 }
 
-void log_set_lock(Logger* logger, void* mutex, void (*lock)(void* mtx, bool lock)) {
+LOG_EXPORT void log_set_lock(Logger* logger, void* mutex, void (*lock)(void* mtx, bool lock)) {
     if(!logger)
         return;
 
@@ -803,7 +803,7 @@ static bool ___log_log_impl(Logger* logger, enum LogLevel log_level, const char*
         if(!___log_format(target->format, log_level, file, function, line, &output, message, args))
             return false;
 
-        target->log(&output, target->ctx);
+        target->log(log_level, file, function, line, &output, target->ctx);
     }
 
     string_free_resources(&output);
@@ -814,7 +814,7 @@ static bool ___log_log_impl(Logger* logger, enum LogLevel log_level, const char*
     return true;
 }
 
-bool ___log_string(Logger* logger, enum LogLevel log_level, const char* file, int line, const String* message, ...) {
+LOG_EXPORT bool ___log_string(Logger* logger, enum LogLevel log_level, const char* file, int line, const String* message, ...) {
     va_list args;
     va_start(args, message);
 
@@ -825,7 +825,7 @@ bool ___log_string(Logger* logger, enum LogLevel log_level, const char* file, in
     return result;
 }
 
-bool ___log_func_string(Logger* logger, enum LogLevel log_level, const char* file, const char* function, int line, const String* message, ...) {
+LOG_EXPORT bool ___log_func_string(Logger* logger, enum LogLevel log_level, const char* file, const char* function, int line, const String* message, ...) {
     va_list args;
     va_start(args, message);
 
@@ -836,7 +836,7 @@ bool ___log_func_string(Logger* logger, enum LogLevel log_level, const char* fil
     return result;
 }
 
-bool ___log_cstr(Logger* logger, enum LogLevel log_level, const char* file, int line, const char* message, ...) {
+LOG_EXPORT bool ___log_cstr(Logger* logger, enum LogLevel log_level, const char* file, int line, const char* message, ...) {
     va_list args;
     va_start(args, message);
 
@@ -847,7 +847,7 @@ bool ___log_cstr(Logger* logger, enum LogLevel log_level, const char* file, int 
     return result;
 }
 
-bool ___log_func_cstr(Logger* logger, enum LogLevel log_level, const char* file, const char* function, int line, const char* message, ...) {
+LOG_EXPORT bool ___log_func_cstr(Logger* logger, enum LogLevel log_level, const char* file, const char* function, int line, const char* message, ...) {
     va_list args;
     va_start(args, message);
 
@@ -856,81 +856,4 @@ bool ___log_func_cstr(Logger* logger, enum LogLevel log_level, const char* file,
     va_end(args);
 
     return result;
-}
-
-struct LogFileName {
-    union {
-        String s;
-        struct LogFormat* format;
-    };
-    bool is_string;
-};
-
-struct LogFile {
-    String name;
-    FILE* file;
-};
-
-struct LogFileTargetContext {
-    struct LogFileName file_name;
-    struct LogFileName archive_file_name;
-
-    String archive_date_format;
-
-    char* buffer;
-    size_t buffer_size;
-
-    enum FileArchiveNumbering archive_numbering;
-    enum FileArchiveTiming archive_timing;
-
-    size_t archive_above_size;
-
-    int max_archive_files;
-    int max_archive_days;
-
-    int buffer_mode;
-
-    bool keep_file_open;
-    bool custom_buffering;
-};
-
-bool log_file_target_context_set_buffering(struct LogFileTargetContext* ctx, size_t size, int mode) {
-    if(ctx->custom_buffering && ctx->buffer_mode != _IONBF) {
-        free(ctx->buffer);
-    }
-    
-    if(mode != _IONBF) {
-        char* buffer = malloc(size);
-        if(!buffer)
-            return false;
-
-        ctx->buffer = buffer;
-        ctx->buffer_size = size;
-    }
-
-    ctx->buffer_mode = mode;
-    ctx->custom_buffering = true;
-}
-
-void log_file_target_context_set_max_archive_files(struct LogFileTargetContext* ctx, int max_file_count) {
-    ctx->max_archive_files = max_file_count;
-}
-
-void log_file_target_context_set_max_archive_days(struct LogFileTargetContext* ctx, int max_file_days) {
-    ctx->max_archive_days = max_file_days;
-}
-
-void log_file_target_context_archive_on_size(struct LogFileTargetContext* ctx, size_t max_size) {
-    ctx->archive_timing = FILE_ARCHIVE_SIZE;
-    ctx->archive_above_size = max_size;
-}
-
-void log_file_target_context_archive_number_sequence(struct LogFileTargetContext* ctx) {
-    ctx->archive_numbering = FILE_ARCHIVE_SEQUENCE;
-}
-
-void log_file_target_context_archive_number_date(struct LogFileTargetContext* ctx, enum FileArchiveNumbering numbering, char* date_string) {
-    ctx->archive_numbering = numbering;
-    string_clear(&ctx->archive_date_format);
-    string_append_cstr(&ctx->archive_date_format, date_string);
 }

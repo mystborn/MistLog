@@ -9,9 +9,12 @@ inc = include_directories([ 'include' ])
 deps = [ sso_string ]
 sources = [ './src/mist_log.c' ]
 
+args = ['-DMIST_LOG_BUILD']
+
 mist_log = static_library(
     'mist_log',
     sources,
+    c_args: args,
     include_directories: inc,
     dependencies: deps,
     name_suffix: 'lib',
@@ -21,6 +24,7 @@ mist_log = static_library(
 mist_log_shared = shared_library(
     'mist_log',
     sources,
+    c_args: args,
     version: '0.0.1',
     include_directories: inc,
     dependencies: deps

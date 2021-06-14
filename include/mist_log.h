@@ -4,6 +4,22 @@
 #include <stdarg.h>
 #include <sso_string.h>
 
+#ifdef MIST_LOG_BUILD
+    #if defined(_WIN32)
+        #define LOG_EXPORT __declspec(dllexport)
+    #elif defined(__ELF__)
+        #define LOG_EXPORT __attribute__((visibility ("default")))
+    #else
+        #define LOG_EXPORT
+    #endif
+#else
+    #if defined(_WIN32)
+        #define LOG_EXPORT __declspec(dllimport)
+    #else
+        #define LOG_EXPORT
+    #endif
+#endif
+
 enum LogLevel {
     LOG_TRACE,
     LOG_DEBUG,
@@ -14,8 +30,9 @@ enum LogLevel {
 };
 
 enum FileArchiveNumbering {
-    FILE_ARCHIVE_SEQUENCE,
-    FILE_ARCHIVE_DATE
+    FILE_ARCHIVE_NUMBER_NONE,
+    FILE_ARCHIVE_NUMBER_SEQUENCE,
+    FILE_ARCHIVE_NUMBER_DATE
 };
 
 enum FileArchiveTiming {
@@ -84,7 +101,7 @@ typedef struct LogTarget {
     /**
      * The method used by this target to actually log the log message.
      */
-    void (*log)(String* msg, void* ctx);
+    void (*log)(enum LogLevel log_level, const char* file, const char* function, uint32_t line, String* msg, void* ctx);
 
     /**
      * A method that can optionally free the context of this target if needed.
@@ -140,12 +157,12 @@ typedef struct Logger {
 /**
  * Creates and initializes a new Logger.
  */
-Logger* log_logger_create();
+LOG_EXPORT Logger* log_logger_create();
 
 /**
  * Frees all the resources used by a logger, than frees the logger.
  */
-void log_logger_free(Logger* logger);
+LOG_EXPORT void log_logger_free(Logger* logger);
 
 /**
  * Creates a log target that outputs to the console.
@@ -154,22 +171,22 @@ void log_logger_free(Logger* logger);
  * @param min_level The minimum level of log messages to allow to this target.
  * @param max_level The maximum level of log messages to allow to this target.
  */
-LogTarget* log_target_console_create(const char* layout, enum LogLevel min_level, enum LogLevel max_level);
+LOG_EXPORT LogTarget* log_target_console_create(const char* layout, enum LogLevel min_level, enum LogLevel max_level);
 
 /**
  * Frees the resources used by a log target, than frees the log target.
  */
-void log_target_free(LogTarget* target);
+LOG_EXPORT void log_target_free(LogTarget* target);
 
 /**
  * Adds a log target to a logger.
  */
-bool log_add_target(Logger* logger, LogTarget* target);
+LOG_EXPORT bool log_add_target(Logger* logger, LogTarget* target);
 
 /**
  * Sets the lock method and mutex value used by a logger. If either is NULL, the logger will never lock and will not be thread-safe.
  */
-void log_set_lock(Logger* logger, void* mutex, void (*lock)(void* mtx, bool lock));
+LOG_EXPORT void log_set_lock(Logger* logger, void* mutex, void (*lock)(void* mtx, bool lock));
 
 /**
  * Registers a custom LogLayoutRenderer.
@@ -182,51 +199,56 @@ void log_set_lock(Logger* logger, void* mutex, void (*lock)(void* mtx, bool lock
  * 
  * @remarks The arguments passed to the create function can be easily parsed using ___log_format_read_arg_name and ___log_format_read_arg_value.
  */
-bool ___log_register_log_format_creator(const char* name, struct LogLayoutRenderer* (*create)(char* text, size_t start, size_t count, void* ctx), void* ctx, void (*free)(void*));
+LOG_EXPORT bool ___log_register_log_format_creator(const char* name, struct LogLayoutRenderer* (*create)(char* text, size_t start, size_t count, void* ctx), void* ctx, void (*free)(void*));
 
 /**
  * Converts a layout format string into a LogFormat value.
  * 
  * @remarks This function is mostly meant to be used by custom LogTarget constructors.
  */
-struct LogFormat* ___log_parse_format(char* format, size_t start, size_t count);
+LOG_EXPORT struct LogFormat* ___log_parse_format(char* format, size_t start, size_t count);
+
+/**
+ * Frees a LogFormat value.
+ */
+LOG_EXPORT void ___log_free_format(struct LogFormat* format);
 
 /**
  * Reads the name of the next argument in the argument list of a layout renderer format string.
  */
-bool ___log_format_read_arg_name(char* text, size_t* start, size_t count, String* name);
+LOG_EXPORT bool ___log_format_read_arg_name(char* text, size_t* start, size_t count, String* name);
 
 /**
  * Reads the value of an argument in the argument list of a layout renderer format string. Can either append the result to a string or return a nested LogFormat value.
  */
-bool ___log_format_read_arg_value(char* text, size_t* start, size_t count, bool as_format, String* value, struct LogFormat** format);
+LOG_EXPORT bool ___log_format_read_arg_value(char* text, size_t* start, size_t count, bool as_format, String* value, struct LogFormat** format);
 
 /**
  * Given a LogFormat, converts a raw log message into a formatted log message.
  * 
  * @remarks Mostly intended to make testing custom LogLayoutRenderers easier.
  */
-bool ___log_format(struct LogFormat* log_format, enum LogLevel level, const char* file, const char* function, uint32_t line, String* message, char* format_string, va_list args);
+LOG_EXPORT bool ___log_format(struct LogFormat* log_format, enum LogLevel level, const char* file, const char* function, uint32_t line, String* message, char* format_string, va_list args);
 
 /**
  * Logs a string value using the specified logger. Does not support logging the calling function name.
  */
-bool ___log_string(Logger* logger, enum LogLevel log_level, const char* file, int line, const String* message, ...);
+LOG_EXPORT bool ___log_string(Logger* logger, enum LogLevel log_level, const char* file, int line, const String* message, ...);
 
 /**
  * Logs a string value using the specified logger.
  */
-bool ___log_func_string(Logger* logger, enum LogLevel log_level, const char* file, const char* function, int line, const String* message, ...);
+LOG_EXPORT bool ___log_func_string(Logger* logger, enum LogLevel log_level, const char* file, const char* function, int line, const String* message, ...);
 
 /**
  * Logs a c-string using the specified logger. Does not support logging the calling function name.
  */
-bool ___log_cstr(Logger* logger, enum LogLevel log_level, const char* file, int line, const char* message, ...);
+LOG_EXPORT bool ___log_cstr(Logger* logger, enum LogLevel log_level, const char* file, int line, const char* message, ...);
 
 /**
  * Logs a c-string using the specified logger.
  */
-bool ___log_func_cstr(Logger* logger, enum LogLevel log_level, const char* file, const char* function, int line, const char* message, ...);
+LOG_EXPORT bool ___log_func_cstr(Logger* logger, enum LogLevel log_level, const char* file, const char* function, int line, const char* message, ...);
 
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L

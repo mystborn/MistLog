@@ -154,6 +154,8 @@ typedef struct Logger {
     int target_capacity;
 } Logger;
 
+struct LogFileTargetContext;
+
 /**
  * Creates and initializes a new Logger.
  */
@@ -163,15 +165,6 @@ LOG_EXPORT Logger* log_logger_create();
  * Frees all the resources used by a logger, than frees the logger.
  */
 LOG_EXPORT void log_logger_free(Logger* logger);
-
-/**
- * Creates a log target that outputs to the console.
- * 
- * @param layout The layout format of the log message output to the console.
- * @param min_level The minimum level of log messages to allow to this target.
- * @param max_level The maximum level of log messages to allow to this target.
- */
-LOG_EXPORT LogTarget* log_target_console_create(const char* layout, enum LogLevel min_level, enum LogLevel max_level);
 
 /**
  * Frees the resources used by a log target, than frees the log target.
@@ -187,6 +180,39 @@ LOG_EXPORT bool log_add_target(Logger* logger, LogTarget* target);
  * Sets the lock method and mutex value used by a logger. If either is NULL, the logger will never lock and will not be thread-safe.
  */
 LOG_EXPORT void log_set_lock(Logger* logger, void* mutex, void (*lock)(void* mtx, bool lock));
+
+/**
+ * Creates a log target that outputs to the console.
+ * 
+ * @param layout The layout format of the log message output to the console.
+ * @param min_level The minimum level of log messages to allow to this target.
+ * @param max_level The maximum level of log messages to allow to this target.
+ */
+LOG_EXPORT LogTarget* log_target_console_create(const char* layout, enum LogLevel min_level, enum LogLevel max_level);
+
+LOG_EXPORT struct LogFileTargetContext* log_file_target_context_create(char* fname);
+
+LOG_EXPORT void log_file_target_context_free(struct LogFileTargetContext* ctx);
+
+LOG_EXPORT bool log_file_target_context_archive_fname(struct LogFileTargetContext* ctx, char* archive_fname);
+
+LOG_EXPORT bool log_file_target_context_set_buffering(struct LogFileTargetContext* ctx, size_t size, int mode);
+
+LOG_EXPORT void log_file_target_context_set_max_archive_files(struct LogFileTargetContext* ctx, int max_file_count);
+
+LOG_EXPORT void log_file_target_context_set_max_archive_days(struct LogFileTargetContext* ctx, int max_file_days);
+
+LOG_EXPORT void log_file_target_context_archive_on_size(struct LogFileTargetContext* ctx, size_t max_size);
+
+LOG_EXPORT void log_file_target_archive_on_date(struct LogFileTargetContext* ctx, enum FileArchiveTiming timing);
+
+LOG_EXPORT void log_file_target_context_archive_number_sequence(struct LogFileTargetContext* ctx);
+
+LOG_EXPORT bool log_file_target_context_archive_number_date(struct LogFileTargetContext* ctx, enum FileArchiveNumbering numbering, char* date_string);
+
+LOG_EXPORT bool log_file_target_context_keep_files_open(struct LogFileTargetContext* ctx);
+
+LogTarget* log_target_file_create(const char* layout, enum LogLevel min_level, enum LogLevel max_level, struct LogFileTargetContext* ctx);
 
 /**
  * Registers a custom LogLayoutRenderer.
@@ -211,7 +237,7 @@ LOG_EXPORT struct LogFormat* ___log_parse_format(char* format, size_t start, siz
 /**
  * Frees a LogFormat value.
  */
-LOG_EXPORT void ___log_free_format(struct LogFormat* format);
+LOG_EXPORT void ___log_format_free(struct LogFormat* format);
 
 /**
  * Reads the name of the next argument in the argument list of a layout renderer format string.

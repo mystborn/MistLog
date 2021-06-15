@@ -2,6 +2,24 @@
 
 #include <time.h>
 
+#ifdef _MSC_VER
+
+#define LOG_WINDOWS
+#include <fileapi.h>
+#include <sys/stat.h>
+
+#elif defined(__clang__) || defined(__GNUC__)
+
+#define LOG_GCC
+#include <unistd.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
+#endif
+
+// TODO: Max Archive Files
+// TODO: File Attribute Update
+
 struct LogFormatTime {
     String format;
     bool is_utc;
@@ -20,7 +38,99 @@ struct LogLayoutRendererFinder {
     size_t capacity;
 };
 
+struct LogFile {
+    struct tm creation_time;
+    String name;
+    FILE* file;
+    char* buffer;
+    int sequence;
+};
+
+struct LogFileTargetContext {
+    struct LogFormat* file_name;
+    struct LogFormat* archive_file_name;
+
+    struct LogFile* files;
+    int files_count;
+    int files_capacity;
+
+    String archive_date_format;
+
+    char* buffer;
+    size_t buffer_size;
+
+    enum FileArchiveNumbering archive_numbering;
+    enum FileArchiveTiming archive_timing;
+
+    size_t archive_above_size;
+
+    int max_archive_files;
+    int max_archive_days;
+
+    int buffer_mode;
+
+    bool keep_files_open;
+    bool custom_buffering;
+};
+
 static struct LogLayoutRendererFinder log_renderer_finder = { NULL, 0, 0 };
+
+// ========================
+// SECION: Layout Renderers
+// ========================
+
+LOG_EXPORT bool ___log_format_read_arg_name(char* text, size_t* start, size_t count, String* name) {
+    for(size_t iter = 0; iter < count; iter++) {
+        if(iter + 1 < count && text[*start] == '\\') {
+            switch(text[*start + 1]) {
+                case '\\':
+                    if(!string_append_cstr(name, "\\"))
+                        return false;
+                    iter += 2;
+                    continue;
+                case ':':
+                    if(!string_append_cstr(name, ":"))
+                        return false;
+                    iter += 2;
+                    continue;
+                case '=':
+                    if(!string_append_cstr(name, "="))
+                        return false;
+                    iter += 2;
+                    continue;
+                case '}':
+                    if(!string_append_cstr(name, "}"))
+                        return false;
+                    iter += 2;
+                    continue;
+            }
+        }
+
+        switch(text[*start]) {
+            case ':':
+            case '=':
+                return true;
+        }
+
+        if(!string_append_cstr_part(name, text, *start, 1))
+            return false;
+        (*start)++;
+    }
+
+    return true;
+}
+
+LOG_EXPORT bool ___log_format_read_arg_value(char* text, size_t* start, size_t count, bool as_format, String* value, struct LogFormat** format) {
+    if(as_format) {
+        *format = ___log_parse_format(text, *start, count);
+        if(!(*format))
+            return false;
+        (*start) += count;
+        return true;
+    } else {
+        return ___log_format_read_arg_name(text, start, count, value);
+    }
+}
 
 static bool log_message_append_uint(String* message, uint32_t number) {
     // The maximum number of characters in a uint is 10 (UINT_MAX).
@@ -48,6 +158,31 @@ static bool log_format_level(enum LogLevel log_level, const char* file, const ch
         case LOG_FATAL: return string_append_cstr(message, "Fatal");
         default: return true;
     }
+}
+
+static struct LogLayoutRenderer* log_renderer_create_level(char* text, size_t start, size_t count, void* ctx) {
+    struct LogLayoutRenderer* renderer = malloc(sizeof(*renderer));
+    if(!renderer)
+        return NULL;
+
+    renderer->append = log_format_level;
+    renderer->free = NULL;
+    renderer->ctx = NULL;
+
+    return renderer;
+}
+
+static struct LogLayoutRendererCreator* log_layout_renderer_creator_level() {
+    struct LogLayoutRendererCreator* creator = malloc(sizeof(*creator));
+    if(!creator)
+        return NULL;
+
+    creator->name = "level";
+    creator->create = log_renderer_create_level;
+    creator->ctx = NULL;
+    creator->free = NULL;
+
+    return creator;
 }
 
 static bool log_format_text(enum LogLevel log_level, const char* file, const char* function, uint32_t line, String* message, void *ctx, char* format, va_list args) {
@@ -106,115 +241,6 @@ static log_format_date_time_free(void* ctx) {
     struct LogFormatTime* format_time = ctx;
     string_free_resources(&format_time->format);
     free(format_time);
-}
-
-static bool log_format_counter(enum LogLevel log_level, const char* file, const char* function, uint32_t line, String* message, void *ctx, char* format, va_list args) {
-    return log_message_append_uint(message, ++(*(uint32_t*)ctx));
-}
-
-static void log_format_counter_free(void* ctx) {
-    free(ctx);
-}
-
-static bool log_format_file(enum LogLevel log_level, const char* file, const char* function, uint32_t line, String* message, void *ctx, char* format, va_list args) {
-    return string_append_cstr(message, file);
-}
-
-static bool log_format_function(enum LogLevel log_level, const char* file, const char* function, uint32_t line, String* message, void *ctx, char* format, va_list args) {
-    return string_append_cstr(message, function);
-}
-
-static bool log_format_line(enum LogLevel log_level, const char* file, const char* function, uint32_t line, String* message, void *ctx, char* format, va_list args) {
-    return log_message_append_uint(message, line);
-}
-
-static bool log_format_message(enum LogLevel log_level, const char* file, const char* function, uint32_t line, String* message, void *ctx, char* format, va_list args) {
-    va_list copy;
-    va_copy(copy, args);
-
-    String* result = string_format_args_cstr(message, format, args);
-
-    va_end(copy);
-
-    return result != NULL;
-}
-
-LOG_EXPORT bool ___log_format_read_arg_name(char* text, size_t* start, size_t count, String* name) {
-    for(size_t iter = 0; iter < count; iter++) {
-        if(iter + 1 < count && text[*start] == '\\') {
-            switch(text[*start + 1]) {
-                case '\\':
-                    if(!string_append_cstr(name, "\\"))
-                        return false;
-                    iter += 2;
-                    continue;
-                case ':':
-                    if(!string_append_cstr(name, ":"))
-                        return false;
-                    iter += 2;
-                    continue;
-                case '=':
-                    if(!string_append_cstr(name, "="))
-                        return false;
-                    iter += 2;
-                    continue;
-                case '}':
-                    if(!string_append_cstr(name, "}"))
-                        return false;
-                    iter += 2;
-                    continue;
-            }
-        }
-
-        switch(text[*start]) {
-            case ':':
-            case '=':
-                return true;
-        }
-
-        if(!string_append_cstr_part(name, text, *start, 1))
-            return false;
-        (*start)++;
-    }
-
-    return true;
-}
-
-LOG_EXPORT bool ___log_format_read_arg_value(char* text, size_t* start, size_t count, bool as_format, String* value, struct LogFormat** format) {
-    if(as_format) {
-        *format = ___log_parse_format(text, *start, count);
-        if(!(*format))
-            return false;
-        (*start) += count;
-        return true;
-    } else {
-        return ___log_format_read_arg_name(text, start, count, value);
-    }
-}
-
-static struct LogLayoutRenderer* log_renderer_create_level(char* text, size_t start, size_t count, void* ctx) {
-    struct LogLayoutRenderer* renderer = malloc(sizeof(*renderer));
-    if(!renderer)
-        return NULL;
-
-    renderer->append = log_format_level;
-    renderer->free = NULL;
-    renderer->ctx = NULL;
-
-    return renderer;
-}
-
-static struct LogLayoutRendererCreator* log_layout_renderer_creator_level() {
-    struct LogLayoutRendererCreator* creator = malloc(sizeof(*creator));
-    if(!creator)
-        return NULL;
-
-    creator->name = "level";
-    creator->create = log_renderer_create_level;
-    creator->ctx = NULL;
-    creator->free = NULL;
-
-    return creator;
 }
 
 static struct LogLayoutRenderer* log_renderer_create_date_time(char* text, size_t start, size_t count, void* ctx) {
@@ -305,6 +331,14 @@ static struct LogLayoutRendererCreator* log_layout_renderer_creator_date_time() 
     return creator;
 }
 
+static bool log_format_counter(enum LogLevel log_level, const char* file, const char* function, uint32_t line, String* message, void *ctx, char* format, va_list args) {
+    return log_message_append_uint(message, ++(*(uint32_t*)ctx));
+}
+
+static void log_format_counter_free(void* ctx) {
+    free(ctx);
+}
+
 static struct LogLayoutRenderer* log_renderer_create_counter(char* text, size_t start, size_t count, void* ctx) {
     struct LogLayoutRenderer* renderer = malloc(sizeof(*renderer));
     if(!renderer)
@@ -337,6 +371,10 @@ static struct LogLayoutRendererCreator* log_layout_renderer_creator_counter() {
     return creator;
 }
 
+static bool log_format_file(enum LogLevel log_level, const char* file, const char* function, uint32_t line, String* message, void *ctx, char* format, va_list args) {
+    return string_append_cstr(message, file);
+}
+
 static struct LogLayoutRenderer* log_renderer_create_file(char* text, size_t start, size_t count, void* ctx) {
     struct LogLayoutRenderer* renderer = malloc(sizeof(*renderer));
     if(!renderer)
@@ -360,6 +398,10 @@ static struct LogLayoutRendererCreator* log_layout_renderer_creator_file() {
     creator->free = NULL;
 
     return creator;
+}
+
+static bool log_format_function(enum LogLevel log_level, const char* file, const char* function, uint32_t line, String* message, void *ctx, char* format, va_list args) {
+    return string_append_cstr(message, function);
 }
 
 static struct LogLayoutRenderer* log_renderer_create_function(char* text, size_t start, size_t count, void* ctx) {
@@ -387,6 +429,10 @@ static struct LogLayoutRendererCreator* log_layout_renderer_creator_function() {
     return creator;
 }
 
+static bool log_format_line(enum LogLevel log_level, const char* file, const char* function, uint32_t line, String* message, void *ctx, char* format, va_list args) {
+    return log_message_append_uint(message, line);
+}
+
 static struct LogLayoutRenderer* log_renderer_create_line(char* text, size_t start, size_t count, void* ctx) {
     struct LogLayoutRenderer* renderer = malloc(sizeof(*renderer));
     if(!renderer)
@@ -410,6 +456,17 @@ static struct LogLayoutRendererCreator* log_layout_renderer_creator_line() {
     creator->free = NULL;
 
     return creator;
+}
+
+static bool log_format_message(enum LogLevel log_level, const char* file, const char* function, uint32_t line, String* message, void *ctx, char* format, va_list args) {
+    va_list copy;
+    va_copy(copy, args);
+
+    String* result = string_format_args_cstr(message, format, args);
+
+    va_end(copy);
+
+    return result != NULL;
 }
 
 static struct LogLayoutRenderer* log_renderer_create_message(char* text, size_t start, size_t count, void* ctx) {
@@ -568,6 +625,10 @@ static struct LogLayoutRenderer* ___log_create_text_renderer(char* format, size_
     return step;
 }
 
+// ===================
+// SECTION: Formatting
+// ===================
+
 struct LogFormat* ___log_parse_format(char* format, size_t start, size_t count) {
     if (!log_format_finder_init())
         return NULL;
@@ -685,6 +746,19 @@ struct LogFormat* ___log_parse_format(char* format, size_t start, size_t count) 
         return NULL;
 }
 
+LOG_EXPORT void ___log_format_free(struct LogFormat* log_format) {
+    if(!log_format)
+        return;
+
+    for(size_t i = 0; i < log_format->step_count; i++) {
+        struct LogLayoutRenderer* renderer = log_format->steps[i];
+        if(renderer->free)
+            renderer->free(renderer->ctx);
+        free(renderer);
+    }
+    free(log_format);
+}
+
 LOG_EXPORT bool ___log_format(struct LogFormat* log_format, enum LogLevel level, const char* file, const char* function, uint32_t line, String* message, char* format_string, va_list args) {
     for(int i = 0; i < log_format->step_count; i++) {
         struct LogLayoutRenderer* step = log_format->steps[i];
@@ -711,31 +785,6 @@ LOG_EXPORT void log_logger_free(Logger* logger) {
     }
 
     free(logger);
-}
-
-static void ___log_console_log(enum LogLevel log_level, const char* file, const char* function, uint32_t line, String* msg, void* ctx) {
-    puts(string_data(msg));
-}
-
-LogTarget* log_target_console_create(const char* layout, enum LogLevel min_level, enum LogLevel max_level) {
-    LogTarget* target = malloc(sizeof(*target));
-    if(!target)
-        return NULL;
-
-    struct LogFormat* fmt = ___log_parse_format(layout, 0, strlen(layout));
-    if(!fmt) {
-        free(target);
-        return NULL;
-    }
-
-    target->format = fmt;
-    target->free = NULL;
-    target->ctx = NULL;
-    target->log = ___log_console_log;
-    target->min_level = min_level;
-    target->max_level = max_level;
-
-    return target;
 }
 
 LOG_EXPORT void log_target_free(LogTarget* target) {
@@ -785,7 +834,7 @@ LOG_EXPORT void log_set_lock(Logger* logger, void* mutex, void (*lock)(void* mtx
 }
 
 
-static bool ___log_log_impl(Logger* logger, enum LogLevel log_level, const char* file, const char* function, int line, const char* message, va_list args) {
+static bool log_log_impl(Logger* logger, enum LogLevel log_level, const char* file, const char* function, int line, const char* message, va_list args) {
     if(!logger)
         return false;
 
@@ -818,7 +867,7 @@ LOG_EXPORT bool ___log_string(Logger* logger, enum LogLevel log_level, const cha
     va_list args;
     va_start(args, message);
 
-    bool result = ___log_log_impl(logger, log_level, file, "", line, string_data(message), args);
+    bool result = log_log_impl(logger, log_level, file, "", line, string_data(message), args);
 
     va_end(args);
 
@@ -829,7 +878,7 @@ LOG_EXPORT bool ___log_func_string(Logger* logger, enum LogLevel log_level, cons
     va_list args;
     va_start(args, message);
 
-    bool result = ___log_log_impl(logger, log_level, file, function, line, string_data(message), args);
+    bool result = log_log_impl(logger, log_level, file, function, line, string_data(message), args);
 
     va_end(args);
 
@@ -840,7 +889,7 @@ LOG_EXPORT bool ___log_cstr(Logger* logger, enum LogLevel log_level, const char*
     va_list args;
     va_start(args, message);
 
-    bool result = ___log_log_impl(logger, log_level, file, "", line, message, args);
+    bool result = log_log_impl(logger, log_level, file, "", line, message, args);
 
     va_end(args);
 
@@ -851,9 +900,674 @@ LOG_EXPORT bool ___log_func_cstr(Logger* logger, enum LogLevel log_level, const 
     va_list args;
     va_start(args, message);
 
-    bool result = ___log_log_impl(logger, log_level, file, function, line, message, args);
+    bool result = log_log_impl(logger, log_level, file, function, line, message, args);
 
     va_end(args);
 
     return result;
+}
+
+// ====================
+// SECTION: Log Targets
+// ====================
+
+static void log_console_log(enum LogLevel log_level, const char* file, const char* function, uint32_t line, String* msg, void* ctx) {
+    puts(string_data(msg));
+}
+
+LogTarget* log_target_console_create(const char* layout, enum LogLevel min_level, enum LogLevel max_level) {
+    LogTarget* target = malloc(sizeof(*target));
+    if(!target)
+        return NULL;
+
+    struct LogFormat* fmt = ___log_parse_format(layout, 0, strlen(layout));
+    if(!fmt) {
+        free(target);
+        return NULL;
+    }
+
+    target->format = fmt;
+    target->free = NULL;
+    target->ctx = NULL;
+    target->log = log_console_log;
+    target->min_level = min_level;
+    target->max_level = max_level;
+
+    return target;
+}
+
+LOG_EXPORT struct LogFileTargetContext* log_file_target_context_create(char* fname) {
+    struct LogFileTargetContext* ctx = calloc(1, sizeof(*ctx));
+    if(!ctx)
+        return NULL;
+
+    ctx->file_name = ___log_parse_format(fname, 0, strlen(fname));
+    if(!ctx->file_name) {
+        free(ctx);
+        return NULL;
+    }
+
+    string_init(&ctx->archive_date_format, "");
+    return ctx;
+}
+
+static void log_file_target_context_free_generic(void* ptr) {
+    struct LogFileTargetContext* ctx = ptr;
+    log_file_target_context_free(ctx);
+}
+
+LOG_EXPORT void log_file_target_context_free(struct LogFileTargetContext* ctx) {
+    ___log_format_free(ctx->file_name);
+
+    if(ctx->archive_file_name)
+        ___log_format_free(ctx->archive_file_name);
+
+    if(ctx->files) {
+        for(size_t i = 0; i < ctx->files_count; i++) {
+            struct LogFile* file = ctx->files + i;
+            if(file->file)
+                fclose(file->file);
+            string_free_resources(&file->name);
+            free(file->buffer);
+        }
+
+        free(ctx->files);
+    }
+
+    string_free_resources(&ctx->archive_date_format);
+    
+    free(ctx);
+}
+
+LOG_EXPORT bool log_file_target_context_archive_fname(struct LogFileTargetContext* ctx, char* archive_fname) {
+    struct LogFormat* format = ___log_parse_format(archive_fname, 0, strlen(archive_fname));
+    if(!format)
+        return false;
+
+    ctx->archive_file_name = format;
+    return true;
+}
+
+LOG_EXPORT bool log_file_target_context_set_buffering(struct LogFileTargetContext* ctx, size_t size, int mode) {
+    if(ctx->custom_buffering && ctx->buffer_mode != _IONBF) {
+        free(ctx->buffer);
+        ctx->buffer = NULL;
+    }
+    
+    if(mode != _IONBF) {
+
+        if(size == 0)
+        {
+            ctx->custom_buffering = false;
+            return true;
+        } else {
+            char* buffer = malloc(size);
+            if(!buffer)
+                return false;
+
+            ctx->buffer = buffer;
+            ctx->buffer_size = size;
+        }
+    }
+
+    ctx->buffer_mode = mode;
+    ctx->custom_buffering = true;
+    return true;
+}
+
+LOG_EXPORT void log_file_target_context_set_max_archive_files(struct LogFileTargetContext* ctx, int max_file_count) {
+    ctx->max_archive_files = max_file_count;
+}
+
+LOG_EXPORT void log_file_target_context_set_max_archive_days(struct LogFileTargetContext* ctx, int max_file_days) {
+    ctx->max_archive_days = max_file_days;
+}
+
+LOG_EXPORT void log_file_target_context_archive_on_size(struct LogFileTargetContext* ctx, size_t max_size) {
+    ctx->archive_timing = FILE_ARCHIVE_SIZE;
+    ctx->archive_above_size = max_size;
+}
+
+LOG_EXPORT void log_file_target_archive_on_date(struct LogFileTargetContext* ctx, enum FileArchiveTiming timing) {
+    ctx->archive_timing = timing;
+}
+
+LOG_EXPORT void log_file_target_context_archive_number_sequence(struct LogFileTargetContext* ctx) {
+    ctx->archive_numbering = FILE_ARCHIVE_NUMBER_SEQUENCE;
+}
+
+LOG_EXPORT bool log_file_target_context_archive_number_date(struct LogFileTargetContext* ctx, enum FileArchiveNumbering numbering, char* date_string) {
+    ctx->archive_numbering = FILE_ARCHIVE_NUMBER_DATE;
+    string_clear(&ctx->archive_date_format);
+    return string_append_cstr(&ctx->archive_date_format, date_string);
+}
+
+LOG_EXPORT bool log_file_target_context_keep_files_open(struct LogFileTargetContext* ctx) {
+    ctx->keep_files_open = true;
+
+    int capacity = 2;
+    ctx->files = malloc(sizeof(*ctx->files) * capacity);
+    if(!ctx->files)
+        return false;
+
+    ctx->files_capacity = capacity;
+
+    return true;
+}
+
+static bool log_file_exists(String* fname) {
+#if defined(LOG_WINDOWS)
+
+    DWORD attribs = GetFileAttributesA(string_data(fname));
+    return attribs != INVALID_FILE_ATTRIBUTES &&
+           !(attribs & FILE_ATTRIBUTE_DIRECTORY);
+
+#elif defined(LOG_GCC)
+
+    return access(string_data(fname), F_OK) == 0;
+
+#else
+    FILE* file = fopen(string_data(fname), "r");
+    if(file) {
+        fclose(file);
+        return true;
+    }
+
+    return false;
+#endif
+}
+
+static bool log_file_info_attribute(struct LogFile* file, char* attrib, String* value) {
+    size_t ext_start = string_rfind_cstr(&file->name, string_size(&file->name), ".");
+    String log_info = string_create("");
+    if(!string_append_string(&log_info, &file->name))
+        return false;
+    
+    if(ext_start != SIZE_MAX) {
+        string_erase(&log_info, ext_start, string_size(&log_info) - ext_start);
+    }
+
+    if(!string_append_cstr(&log_info, ".li")) {
+        string_free_resources(&log_info);
+        return false;
+    }
+
+    FILE* log_info_file = fopen(string_data(&log_info), "r");
+    if(!log_info_file) {
+        string_free_resources(&log_info);
+        return false;
+    }
+
+    size_t attrib_length = strlen(attrib);
+
+    // Prefer getLine implementation if possible to avoid reading whole file into program.
+#ifdef LOG_GCC
+
+    char* line;
+    size_t line_buf_size;
+    ssize_t line_size;
+
+    size_t attrib_length = strlen(attrib);
+    bool result = false;
+
+    while((line_size = getLine(&line, &line_buf_size, log_info_file)) != -1) {
+        if(strncmp(line, attrib, attrib_length) == 0) {
+            if(line_size > attrib_length + 1) {
+                if(!string_append_cstr_part(value, line, attrib_length + 1, line_size - attrib_length - 1))
+                    break;
+                
+                result = true;
+                break;
+            }
+        }
+    }
+
+    free(line);
+    string_free_resources(&log_info);
+    fclose(log_info_file);
+    return result;
+
+#else
+
+    if(fseek(log_info_file, 0, SEEK_END) == 0) {
+        int64_t fsize = ftell(log_info_file);
+        if(fsize == -1) {
+            string_free_resources(&log_info);
+            fclose(log_info_file);
+            return false;
+        }
+
+        String file_contents = string_create("");
+        if(!string_reserve(&file_contents, fsize)) {
+            string_free_resources(&log_info);
+            fclose(log_info_file);
+            return false;
+        }
+
+        if(fseek(log_info_file, 0, SEEK_SET) != 0) {
+            string_free_resources(&log_info);
+            string_free_resources(&file_contents);
+            fclose(log_info_file);
+            return false;
+        }
+
+        size_t file_read_length = fread(string_cstr(&file_contents), sizeof(char), fsize, log_info_file);
+        if(ferror(log_info_file) != 0) {
+            string_free_resources(&log_info);
+            string_free_resources(&file_contents);
+            fclose(log_info_file);
+            return false;
+        }
+
+        string_cstr(&file_contents)[file_read_length] = '\0';
+        if(___sso_string_is_long(&file_contents))
+            ___sso_string_long_set_size(&file_contents, file_read_length);
+        else
+            ___sso_string_short_set_size(&file_contents, file_read_length);
+
+        String new_line = string_create("\n");
+        size_t line_count;
+        String* lines = lstring_split(&file_contents, &new_line, NULL, -1, &line_count, true, true);
+        if(!lines) {
+            string_free_resources(&log_info);
+            string_free_resources(&file_contents);
+            fclose(log_info_file);
+            return false;
+        }
+
+        for(size_t i = 0; i < line_count; i++) {
+            if(string_starts_with_cstr(lines + i, attrib)) {
+                bool result = string_append_string_part(value, lines + i, attrib_length + 1, string_size(lines + i) - attrib_length - 1);
+                free(lines);
+                string_free_resources(&log_info);
+                string_free_resources(&file_contents);
+                fclose(log_info_file);
+                return result;
+            }
+        }
+
+        free(lines);
+        string_free_resources(&log_info);
+        string_free_resources(&file_contents);
+        fclose(log_info_file);
+        return false;
+    }
+
+    string_free_resources(&log_info);
+    fclose(log_info_file);
+    return false;
+
+#endif
+}
+
+static void log_file_creation_time(struct LogFile* file) {
+#if defined(LOG_WINDOWS)
+
+    WIN32_FILE_ATTRIBUTE_DATA file_data;
+    if(GetFileAttributesExA(string_data(&file->name), GetFileExInfoStandard, &file_data)) {
+
+        ULARGE_INTEGER ull; 
+        ull.LowPart = file_data.ftCreationTime.dwLowDateTime;
+        ull.HighPart = file_data.ftCreationTime.dwHighDateTime;
+        time_t t = ull.QuadPart / 10000000ULL - 11644473600ULL;
+
+        file->creation_time = *localtime(&t);
+        return;
+    }
+
+#elif defined(LOG_GCC)
+
+    struct statx buffer;
+    if(statx(AT_FDCWD, string_data(&file->fname), AT_STATX_SYNC_AS_STAT, STATX_BTIME, &buffer) == 0) {
+        time_t t = buffer.stx_btime.tv_sec;
+        file->creation_time = *localtime(&t);
+        return;
+    }
+
+#endif
+
+    String create_time = string_create("");
+    if(log_file_info_attribute(file, "creation_time", &create_time)) {
+        time_t t;
+        if(sscanf(string_data(&create_time), "%lld", &t) == 1) {
+            file->creation_time = *localtime(&t);
+        }
+
+        string_free_resources(&create_time);
+    }
+}
+
+static void log_file_sequence(struct LogFile* file) {
+    String sequence = string_create("");
+    if(log_file_info_attribute(file, "sequence", &sequence)) {
+        int sequence_num;
+        
+        if(sscanf(string_data(&sequence), "%d", &sequence_num) == 1) {
+            file->sequence = sequence_num;
+        }
+        string_free_resources(&sequence);
+    }
+
+    file->sequence = 1;
+}
+
+static uint64_t log_file_size(struct LogFile* file) {
+#if defined(LOG_WINDOWS)
+
+    uint64_t size = GetFileSize(file->file, NULL);
+    if(size == INVALID_FILE_SIZE)
+        return 0;
+
+    return size;
+
+#elif defined(LOG_GCC)
+    struct statx buffer;
+    if(statx(AT_FDCWD, string_data(&file->fname), AT_STATX_SYNC_AS_STAT, STATX_SIZE, &buffer) == 0) {
+        return buffer.stx_size;
+    }
+#else
+
+    fseek(file->file, 0, SEEK_END);
+    size_t size = ftell(file->file);
+    fseek(file->file, 0, SEEK_SET);
+
+    return size;
+
+#endif
+}
+
+static struct LogFile* log_file_open(struct LogFileTargetContext* ctx, String* fname) {
+    for(int i = 0; i < ctx->files; i++) {
+        if(string_equals_string(&ctx->files[i].name, fname)) {
+            if(!ctx->keep_files_open) {
+                ctx->files[i].file = fopen(string_data(fname), "a");
+                if(!ctx->files[i].file)
+                    return NULL;
+            }
+
+            return ctx->files + i;
+        }
+    }
+
+    if(ctx->files_count == ctx->files_capacity) {
+        size_t capacity = ctx->files_capacity * 2;
+        void* buffer = realloc(ctx->files, sizeof(*ctx->files) * capacity);
+        if(!buffer)
+            return NULL;
+        
+        ctx->files = buffer;
+        ctx->files_capacity = capacity;
+    }
+
+    struct LogFile* file = ctx->files + ctx->files_count;
+
+    if(log_file_exists(fname)) {
+        file->file = fopen(string_data(fname), "a");
+        if(!file->file)
+            return NULL;
+
+        string_copy(fname, &file->name);
+
+        if(ctx->archive_timing != FILE_ARCHIVE_NONE && ctx->archive_timing != FILE_ARCHIVE_SIZE) {
+            log_file_creation_time(file);
+        }
+
+        if(ctx->archive_numbering == FILE_ARCHIVE_NUMBER_SEQUENCE) {
+            log_file_sequence(file);
+        }
+    } else {
+        file->file = fopen(string_data(fname), "a");
+        if(!file->file)
+            return NULL;
+
+        string_copy(fname, &file->name);
+        if(ctx->archive_timing != FILE_ARCHIVE_NONE && ctx->archive_timing != FILE_ARCHIVE_SIZE) {
+            time_t t = time(NULL);
+            file->creation_time = *localtime(&t);
+        }
+
+        if(ctx->archive_numbering == FILE_ARCHIVE_NUMBER_SEQUENCE) {
+            log_file_sequence(file);
+        }
+    }
+
+    return file;
+}
+
+static bool string_strip_extension(String* value, String* ext) {
+    size_t position = string_rfind_cstr(value, string_size(value), ".");
+    if(position == SIZE_MAX)
+        return false;
+
+    if(!string_append_string_part(ext, value, position, string_size(value) - position))
+        return false;
+
+    string_erase(value, position, string_size(value) - position);
+    return true;
+}
+
+static void log_file_archive(
+    struct LogFileTargetContext* ctx, 
+    struct LogFile* file,
+    enum LogLevel log_level,
+    const char* calling_file,
+    const char* function,
+    uint32_t line,
+    String* msg)
+{
+    String log_file_name = string_create("");
+    if(!___log_format(ctx->archive_file_name, log_level, calling_file, function, line, &log_file_name, "%s", msg))
+        return;
+
+    String ext = string_create("");
+    switch(ctx->archive_numbering) {
+        case FILE_ARCHIVE_NUMBER_NONE:
+            break;
+        case FILE_ARCHIVE_NUMBER_SEQUENCE:
+            bool has_ext = string_strip_extension(&log_file_name, &ext);
+            if(!string_format_cstr(&log_file_name, ".%d", file->sequence)) {
+                string_free_resources(&ext);
+                string_free_resources(&log_file_name);
+                return;
+            }
+            if(has_ext) {
+                if(!string_append_string(&log_file_name, &ext)) {
+                    string_free_resources(&log_file_name);
+                    string_free_resources(&ext);
+                    return;
+                }
+            }
+            break;
+        case FILE_ARCHIVE_NUMBER_DATE:
+            char datetime[256];
+            time_t t = time(NULL);
+            struct tm time_value = *localtime(&t);
+            size_t count = strftime(datetime, 256, string_date(&ctx->archive_date_format), &time_value);
+            if(count == 0) {
+                string_free_resources(&log_file_name);
+                return;
+            }
+
+            bool has_ext = string_strip_extension(&log_file_name, &ext);
+            if(!string_append_cstr_part(&log_file_name, datetime, 0, count)) {
+                string_free_resources(&ext);
+                string_free_resources(&log_file_name);
+                return;
+            }
+            if(has_ext) {
+                if(!string_append_string(&log_file_name, &ext)) {
+                    string_free_resources(&log_file_name);
+                    string_free_resources(&ext);
+                    return;
+                }
+            }
+            break;
+    }
+
+    bool was_open = file->file != NULL;
+    if(was_open)
+        fclose(file->file);
+
+    rename(string_data(&file->name), string_data(&log_file_name));
+
+    string_free_resources(&log_file_name);
+
+    if(was_open) {
+        file->file = fopen(string_data(&file->name), "w+");
+        if(!file->file)
+            return;
+    }
+
+    if(ctx->archive_timing == FILE_ARCHIVE_NUMBER_SEQUENCE)
+        file->sequence++;
+}
+
+static bool log_file_day_passed(struct tm* creation_time, struct tm* current_time, int day) {
+    int last_day = creation_time->tm_yday - creation_time->tm_wday + day;
+
+    // Make sure to account for leap year.
+    int max_days = 365;
+    if(creation_time->tm_year % 4 == 0) {
+        if(creation_time->tm_year % 100 == 0) {
+            if(creation_time->tm_year % 400 != 0) {
+                max_days = 366;
+            }
+        } else {
+            max_days = 366;
+        }
+    }
+
+    if(last_day >= max_days - 7) {
+        return current_time->tm_yday >= (7 - (max_days - last_day));
+    } else if(current_time->tm_year > creation_time->tm_year) {
+        return current_time->tm_yday >= last_day + 7;
+    }
+
+    return false;
+}
+
+static void log_file_archive_if_needed(
+    struct LogFileTargetContext* ctx, 
+    struct LogFile* file,
+    enum LogLevel log_level,
+    const char* calling_file,
+    const char* function,
+    uint32_t line,
+    String* msg) 
+{
+    if(ctx->archive_timing == FILE_ARCHIVE_NONE)
+        return;
+
+    if(ctx->archive_timing == FILE_ARCHIVE_SIZE) {
+        size_t fsize = log_file_size(file);
+        if(fsize >= ctx->archive_above_size) {
+
+        }
+    } else {
+        time_t current_time = time(NULL);
+        struct tm* datetime = localtime(&current_time);
+        time_t file_time;
+        double difference;
+        switch(ctx->archive_timing) {
+            case FILE_ARCHIVE_DAY:
+                time_t file_time = mktime(&file->creation_time);
+                double difference = difftime(current_time, file_time);
+                if(difference >= 86400)
+                    log_file_archive(ctx, file, log_level, calling_file, function, line, msg);
+                break;
+            case FILE_ARCHIVE_HOUR:
+                time_t file_time = mktime(&file->creation_time);
+                double difference = difftime(current_time, file_time);
+                if(difference >= 3600)
+                    log_file_archive(ctx, file, log_level, calling_file, function, line, msg);
+                break;
+            case FILE_ARCHIVE_MINUTE:
+                time_t file_time = mktime(&file->creation_time);
+                double difference = difftime(current_time, file_time);
+                if(difference >= 60)
+                    log_file_archive(ctx, file, log_level, calling_file, function, line, msg);
+                break;
+            case FILE_ARCHIVE_MONTH:
+                if (datetime->tm_mon > file->creation_time.tm_mon ||
+                    datetime->tm_year > file->creation_time.tm_year)
+                    {
+                        log_file_archive(ctx, file, log_level, calling_file, function, line, msg);
+                    }
+                    break;
+            case FILE_ARCHIVE_YEAR:
+                if(datetime->tm_year > file->creation_time.tm_year)
+                    log_file_archive(ctx, file, log_level, calling_file, function, line, msg);
+                break;
+            case FILE_ARCHIVE_SUNDAY:
+                if(log_file_day_passed(&file->creation_time, datetime, 0))
+                    log_file_archive(ctx, file, log_level, calling_file, function, line, msg);
+                break;
+            case FILE_ARCHIVE_MONDAY:
+                if(log_file_day_passed(&file->creation_time, datetime, 1))
+                    log_file_archive(ctx, file, log_level, calling_file, function, line, msg);
+                break;
+            case FILE_ARCHIVE_TUESDAY:
+                if(log_file_day_passed(&file->creation_time, datetime, 2))
+                    log_file_archive(ctx, file, log_level, calling_file, function, line, msg);
+                break;
+            case FILE_ARCHIVE_WEDNESDAY:
+                if(log_file_day_passed(&file->creation_time, datetime, 3))
+                    log_file_archive(ctx, file, log_level, calling_file, function, line, msg);
+                break;
+            case FILE_ARCHIVE_THURSDAY:
+                if(log_file_day_passed(&file->creation_time, datetime, 4))
+                    log_file_archive(ctx, file, log_level, calling_file, function, line, msg);
+                break;
+            case FILE_ARCHIVE_FRIDAY:
+                if(log_file_day_passed(&file->creation_time, datetime, 5))
+                    log_file_archive(ctx, file, log_level, calling_file, function, line, msg);
+                break;
+            case FILE_ARCHIVE_SATURDAY:
+                if(log_file_day_passed(&file->creation_time, datetime, 6))
+                    log_file_archive(ctx, file, log_level, calling_file, function, line, msg);
+                break;
+        }
+    }
+}
+
+static void log_file_log(enum LogLevel log_level, const char* file, const char* function, uint32_t line, String* msg, void* ptr) {
+    struct LogFileTargetContext* ctx = ptr;
+    String fname = string_create("");
+
+    if(!___log_format(ctx->file_name, log_level, file, function, line, &fname, "%s", string_data(msg)))
+        return;
+
+    struct LogFile* log_file = log_file_open(ctx, &fname);
+    if(!log_file) {
+        string_free_resources(&fname);
+        return;
+    }
+
+    log_file_archive_if_needed(ctx, log_file, log_level, file, function, line, msg);
+
+    fputs(string_data(msg), log_file->file);
+
+    if(!ctx->keep_files_open)
+        fclose(log_file->file);
+}
+
+LogTarget* log_target_file_create(const char* layout, enum LogLevel min_level, enum LogLevel max_level, struct LogFileTargetContext* ctx) {
+    LogTarget* target = malloc(sizeof(*target));
+    if(!target)
+        return NULL;
+
+    struct LogFormat* fmt = ___log_parse_format(layout, 0, strlen(layout));
+    if(!fmt) {
+        free(target);
+        return NULL;
+    }
+
+    target->format = fmt;
+    target->free = log_file_target_context_free;
+    target->ctx = ctx;
+    target->log = log_file_log;
+    target->min_level = min_level;
+    target->max_level = max_level;
+
+    return target;
 }

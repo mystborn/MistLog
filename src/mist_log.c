@@ -5,7 +5,7 @@
 #ifdef _MSC_VER
 
 #define LOG_WINDOWS
-#include <fileapi.h>
+#include <Windows.h>
 #include <sys/stat.h>
 
 #elif defined(__clang__) || defined(__GNUC__)
@@ -14,11 +14,17 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <glob.h>
+
+#if __GNUC__ > 2 || (__GNUC__ == 2 && (__GNUC_MINOR__ >= 28))
+
+#define LOG_STATX
+
+#endif
 
 #endif
 
 // TODO: Max Archive Files
-// TODO: File Attribute Update
 
 struct LogFormatTime {
     String format;
@@ -1107,12 +1113,11 @@ static bool log_file_info_attribute(struct LogFile* file, char* attrib, String* 
     size_t line_buf_size;
     ssize_t line_size;
 
-    size_t attrib_length = strlen(attrib);
     bool result = false;
 
     while((line_size = getLine(&line, &line_buf_size, log_info_file)) != -1) {
         if(strncmp(line, attrib, attrib_length) == 0) {
-            if(line_size > attrib_length + 1) {
+            if(line_size >= attrib_length + 1) {
                 if(!string_append_cstr_part(value, line, attrib_length + 1, line_size - attrib_length - 1))
                     break;
                 
@@ -1200,22 +1205,224 @@ static bool log_file_info_attribute(struct LogFile* file, char* attrib, String* 
 #endif
 }
 
+static bool log_file_info_handle_attribute(
+    struct LogFile* file, 
+    char* attrib, 
+    void* ctx, 
+    void (*handle_attrib)(FILE* file, String* current_line, char* attrib, void* ctx))
+{
+    size_t ext_start = string_rfind_cstr(&file->name, string_size(&file->name), ".");
+    String log_info = string_create("");
+    if(!string_append_string(&log_info, &file->name))
+        return false;
+    
+    if(ext_start != SIZE_MAX) {
+        string_erase(&log_info, ext_start, string_size(&log_info) - ext_start);
+    }
+
+    if(!string_append_cstr(&log_info, ".li")) {
+        string_free_resources(&log_info);
+        return false;
+    }
+
+    FILE* log_info_file = fopen(string_data(&log_info), "r");
+    if(!log_info_file) {
+        string_free_resources(&log_info);
+        return false;
+    }
+
+    size_t attrib_length = strlen(attrib);
+
+// Prefer getLine implementation if possible to avoid reading whole file into program.
+#ifdef LOG_GCC
+
+    char* line;
+    size_t line_buf_size;
+    ssize_t line_size;
+
+    bool result = true;
+
+    // Create a temporary file to copy the old data over to. This is the only
+    // way to replace existing data unfortunately.
+    String temp_name;
+    if(!string_copy(&log_info, &temp_name) || !string_append_cstr(&temp_name, ".tmp")) {
+        string_free_resources(&log_info);
+        fclose(log_info_file);
+        return false;
+    }
+
+    FILE* temp = fopen(string_data(&temp_name), "w");
+    if(!temp) {
+        string_free_resources(&log_info);
+        string_free_resources(&temp_name);
+        fclose(log_info_file);
+        return false;
+    }
+
+    bool found = false;
+
+    // Loop through all lines in the file.
+    while((line_size = getLine(&line, &line_buf_size, log_info_file)) != -1) {
+        // The attribute was found. Overwrite it with the new value.
+        if(strncmp(line, attrib, attrib_length) == 0) {
+            String str = string_create(line);
+            handle_attrib(temp, &str, attrib, ctx);
+
+            found = true;
+        } else {
+            // Not the attribute. Copy it over to the temp file.
+            if(fputs(line, temp) < 0) {
+                result = false;
+                break;
+            }
+        }
+    }
+
+    // If the result wasn't found, append it to the end of the file.
+    if(result && !found) {
+        if(fprintf(temp, "%s=%s", attrib, string_data(value)) < 0) {
+            result = false;
+        }
+    }
+
+    // Close the files before anything else so that they can be removed/renamed.
+    fclose(log_info_file);
+    fclose(temp);
+
+    // Replace the old log file with the new one if everything has been successful so far.
+    if(result)
+        result = remove(string_data(&log_info)) == 0 && rename(string_data(&temp_name), string_data(&log_info));
+
+    // free the remaining resources.
+    free(line);
+    string_free_resources(&log_info);
+    string_free_resources(&temp_name);
+    return result;
+
+#else
+
+    if(fseek(log_info_file, 0, SEEK_END) == 0) {
+        int64_t fsize = ftell(log_info_file);
+        if(fsize == -1) {
+            string_free_resources(&log_info);
+            fclose(log_info_file);
+            return false;
+        }
+
+        String file_contents = string_create("");
+        if(!string_reserve(&file_contents, fsize)) {
+            string_free_resources(&log_info);
+            fclose(log_info_file);
+            return false;
+        }
+
+        if(fseek(log_info_file, 0, SEEK_SET) != 0) {
+            string_free_resources(&log_info);
+            string_free_resources(&file_contents);
+            fclose(log_info_file);
+            return false;
+        }
+
+        size_t file_read_length = fread(string_cstr(&file_contents), sizeof(char), fsize, log_info_file);
+        if(ferror(log_info_file) != 0) {
+            string_free_resources(&log_info);
+            string_free_resources(&file_contents);
+            fclose(log_info_file);
+            return false;
+        }
+
+        string_cstr(&file_contents)[file_read_length] = '\0';
+        if(___sso_string_is_long(&file_contents))
+            ___sso_string_long_set_size(&file_contents, file_read_length);
+        else
+            ___sso_string_short_set_size(&file_contents, file_read_length);
+
+        String new_line = string_create("\n");
+        size_t line_count;
+        String* lines = string_split(&file_contents, &new_line, NULL, -1, &line_count, true, true);
+        string_free_resources(&file_contents);
+        if(!lines) {
+            string_free_resources(&log_info);
+            fclose(log_info_file);
+            return false;
+        }
+
+        log_info_file = freopen(string_data(&log_info), "w", log_info_file);
+        if(!log_info_file) {
+            string_free_resources(&log_info);
+            return false;
+        }
+
+        bool result = true;
+        bool found = false;
+
+        for(size_t i = 0; i < line_count; i++) {
+            if(string_starts_with_cstr(lines + i, attrib)) {
+                handle_attrib(log_info_file, lines + i, attrib, ctx);
+                found = true;
+            } else {
+                if(fprintf(log_info_file, "%s", string_data(lines + i)) < 0) {
+                    result = false;
+                    break;
+                }
+            }
+        }
+
+        if(result && !found) {
+            handle_attrib(log_info_file, NULL, attrib, ctx);
+        }
+
+        free(lines);
+        string_free_resources(&log_info);
+        fclose(log_info_file);
+
+        return result;
+    }
+
+    return false;
+#endif
+}
+
+static void log_file_info_write_attribute_impl(FILE* file, char* current_line, char* attrib, void* ctx) {
+    String* str = ctx;
+    fprintf(file, "%s=%s", attrib, string_data(str));
+}
+
+static void log_file_info_append_attribute_impl(FILE* file, char* current_line, char* attrib, void* ctx) {
+    String* str = ctx;
+    fprintf(file, "%s%s", current_line, string_data(str));
+}
+
+static bool log_file_info_write_attribute(struct LogFile* file, char* attrib, String* value) {
+    return log_file_info_handle_attribute(file, attrib, value, log_file_info_write_attribute_impl);
+}
+
+static bool log_file_info_append_attribute(struct LogFile* file, char* attrib, String* value) {
+    return log_file_info_handle_attribute(file, attrib, value, log_file_info_append_attribute_impl);
+}
+
+#ifdef LOG_WINDOWS
+
+static time_t log_file_time_to_time(FILETIME* ft) {
+    ULARGE_INTEGER ull; 
+    ull.LowPart = ft->dwLowDateTime;
+    ull.HighPart = ft->dwHighDateTime;
+    return ull.QuadPart / 10000000ULL - 11644473600ULL;
+}
+
+#endif
+
 static void log_file_creation_time(struct LogFile* file) {
 #if defined(LOG_WINDOWS)
 
     WIN32_FILE_ATTRIBUTE_DATA file_data;
     if(GetFileAttributesExA(string_data(&file->name), GetFileExInfoStandard, &file_data)) {
-
-        ULARGE_INTEGER ull; 
-        ull.LowPart = file_data.ftCreationTime.dwLowDateTime;
-        ull.HighPart = file_data.ftCreationTime.dwHighDateTime;
-        time_t t = ull.QuadPart / 10000000ULL - 11644473600ULL;
-
+        time_t t = log_file_time_to_time(&file_data.ftCreationTime);
         file->creation_time = *localtime(&t);
         return;
     }
 
-#elif defined(LOG_GCC)
+#elif defined(LOG_GCC) && defined(LOG_STATX)
 
     struct statx buffer;
     if(statx(AT_FDCWD, string_data(&file->fname), AT_STATX_SYNC_AS_STAT, STATX_BTIME, &buffer) == 0) {
@@ -1243,7 +1450,7 @@ static void log_file_sequence(struct LogFile* file) {
         int sequence_num;
         
         if(sscanf(string_data(&sequence), "%d", &sequence_num) == 1) {
-            file->sequence = sequence_num;
+            file->sequence = sequence_num + 1;
         }
         string_free_resources(&sequence);
     }
@@ -1260,7 +1467,7 @@ static uint64_t log_file_size(struct LogFile* file) {
 
     return size;
 
-#elif defined(LOG_GCC)
+#elif defined(LOG_GCC) && defined(LOG_STATX)
     struct statx buffer;
     if(statx(AT_FDCWD, string_data(&file->fname), AT_STATX_SYNC_AS_STAT, STATX_SIZE, &buffer) == 0) {
         return buffer.stx_size;
@@ -1346,6 +1553,191 @@ static bool string_strip_extension(String* value, String* ext) {
     return true;
 }
 
+struct LogArchiveDeleteContext {
+    // Borrowed pointer to the new file name.
+    String* new_file;
+
+    // Either max_archive_days or max_archive_files.
+    int value;
+};
+
+static void log_info_delete_files_on_days_impl(FILE* file, String* current_line, char* attrib, void* ptr) {
+    struct LogArchiveDeleteContext* ctx = ptr;
+    time_t current_time = time(NULL);
+
+    if(!current_line) {
+        fprintf(file, "%s=%lld?%s\n", attrib, (int64_t)current_time, string_data(ctx->new_file));
+        return;
+    }
+
+    size_t attrib_length = strlen(attrib) + 1;
+    String value = string_create("");
+    String fname = string_create("");
+    String* files = NULL;
+    bool processing = false;
+
+    if(!string_append_string_part(&value, current_line, attrib_length, string_size(current_line) - attrib_length))
+        goto end;
+
+    String separator = string_create("|");
+    size_t count;
+    String* files = string_split(&value, &separator, NULL, STRING_SPLIT_ALLOCATE, &count, true, true);
+    if(!files)
+        goto end;
+
+    string_clear(&value);
+
+    processing = true;
+
+    for(size_t i = 0; i < count; i++) {
+        if(processing) {
+            string_clear(&fname);
+            int64_t arg;
+            size_t index = string_find_cstr(files + i, 0, "?");
+            if(index != SIZE_MAX) {
+                if(string_append_string_part(&fname, files + i, 0, index)) {
+                    if(sscanf(string_data(files + i) + index + 1, "%lld", &arg) == 1) {
+                        time_t t = arg;
+                        double diff = difftime(current_time, t);
+                        if(diff >= 86400 * ctx->value)
+                            remove(string_data(&fname));
+                        else {
+                            processing = string_append_string(&value, files + i) && string_append_cstr(&value, "|");
+                        }
+                    } else {
+                        processing = false;
+                    }
+                } else {
+                    processing = false;
+                }
+            }
+        }
+
+        string_free_resources(files + i);
+    }
+
+    end:
+        if(processing)
+            fputs(string_data(&value), file);
+        else
+            fputs(string_data(current_line), file);
+
+        string_free_resources(&fname);
+        string_free_resources(&value);
+        free(files);
+}
+
+static void log_info_delete_files_on_count_impl(FILE* file, String* current_line, char* attrib, void* ptr) {
+    struct LogArchiveDeleteContext* ctx = ptr;
+    if(!current_line) {
+        fprintf(file, "%s=%s\n", attrib, string_data(ctx->new_file));
+        return;
+    }
+
+    size_t attrib_length = strlen(attrib) + 1;
+    String value = string_create("");
+    String fname = string_create("");
+    String* files = NULL;
+    bool processing = false;
+
+    if(!string_append_string_part(&value, current_line, attrib_length, string_size(current_line) - attrib_length))
+        goto end;
+
+    String separator = string_create("|");
+    size_t count;
+    String* files = string_split(&value, &separator, NULL, STRING_SPLIT_ALLOCATE, &count, true, true);
+    if(!files)
+        goto end;
+
+    string_clear(&value);
+    processing = true;
+    int i = 0;
+    int files_to_delete = count - ctx->value;
+
+    for(; i < files_to_delete; i++) {
+        remove(string_data(files + i));
+        string_free_resources(files + i);
+    }
+
+    string_clear(&value);
+    bool processing = true;
+    for(; i < count; i++) {
+        if(processing) {
+            processing = string_append_string(&value, files + i) && string_append_cstr(&value, "|");
+        }
+        string_free_resources(files + i);
+    }
+
+    end:
+        if(processing)
+            fputs(string_data(&value), file);
+        else
+            fputs(string_data(current_line), file);
+        string_free_resources(&fname);
+        string_free_resources(&value);
+        free(files);
+}
+
+static bool log_info_delete_files_on_days(struct LogFile* file, struct LogArchiveDeleteContext* ctx) {
+    return log_file_info_handle_attribute(file, "archives", ctx, log_info_delete_files_on_days_impl);
+}
+
+static bool log_info_delete_files_on_count(struct LogFile* file, struct LogArchiveDeleteContext* ctx) {
+    return log_file_info_handle_attribute(file, "archives", ctx, log_info_delete_files_on_count_impl);
+}
+
+static void log_file_delete_old_archives(
+    struct LogFileTargetContext* ctx, 
+    struct LogFile* file,
+    String* log_archive_name,
+    String* archive_file_pattern,
+    time_t t)
+{
+    if(ctx->max_archive_days > 0) {
+#if defined(LOG_WINDOWS)
+        WIN32_FIND_DATAA find_data;
+        HANDLE handle = FindFirstFileA(string_data(archive_file_pattern), &find_data);
+        if(handle != INVALID_HANDLE_VALUE) {
+            do {
+                time_t archive_time = log_file_time_to_time(&find_data.ftCreationTime);
+                double time_diff = difftime(t, archive_time);
+                if(time_diff >= 86400 * ctx->max_archive_days)
+                    DeleteFileA(find_data.cFileName);
+            }
+            while(FindNextFileA(handle, &find_data));
+
+            FindClose(handle);
+            return;
+        }
+#elif defined(LOG_STATX)
+        glob_t pattern;
+        struct statx buffer;
+        if(glob(string_data(&archive_file_pattern), 0, NULL, &pattern) == 0) {
+            for(int i = 0; i < pattern.gl_pathc; i++) {
+                if(statx(AT_FDCWD, pattern.gl_pathv[i], AT_STATX_SYNC_AS_STAT, STATX_BTIME, &buffer) == 0) {
+                    double time_diff = difftime(t, (time_t)buffer.stx_btime.tv_sec);
+                    if(time_diff >= 86400 * ctx->max_archive_days)
+                        remove(pattern.gl_pathv[i]);
+                }
+            }
+            globfree(&pattern);
+            return;
+        }
+        globfree(&pattern);
+#endif
+        struct LogArchiveDeleteContext delete_ctx;
+        delete_ctx.value = ctx->max_archive_days;
+        delete_ctx.new_file = log_archive_name;
+        log_info_delete_files_on_days(file, &delete_ctx);
+    } else {
+        // Todo: Optimize this using FindNextFile/glob.
+        struct LogArchiveDeleteContext delete_ctx;
+        delete_ctx.value = ctx->max_archive_files;
+        delete_ctx.new_file = log_archive_name;
+        log_info_delete_files_on_count(file, &delete_ctx);
+    }
+}
+
 static void log_file_archive(
     struct LogFileTargetContext* ctx, 
     struct LogFile* file,
@@ -1360,66 +1752,101 @@ static void log_file_archive(
         return;
 
     String ext = string_create("");
+    String archive_file_pattern = string_create("");
+    String number = string_create("");
+    String log_files = string_create("");
+    bool has_ext = false;
+    time_t t = time(NULL);
+    bool result = false;
+
     switch(ctx->archive_numbering) {
         case FILE_ARCHIVE_NUMBER_NONE:
+            remove(string_data(&log_file_name));
+            result = true;
             break;
         case FILE_ARCHIVE_NUMBER_SEQUENCE:
-            bool has_ext = string_strip_extension(&log_file_name, &ext);
-            if(!string_format_cstr(&log_file_name, ".%d", file->sequence)) {
-                string_free_resources(&ext);
-                string_free_resources(&log_file_name);
-                return;
+            has_ext = string_strip_extension(&log_file_name, &ext);
+
+            if (!string_append_string(&archive_file_pattern, &log_file_name) ||
+                !string_append_cstr(&archive_file_pattern, "*"))
+            {
+                break;
+            } else if(has_ext && !string_append_string(&archive_file_pattern, &ext)) {
+                break;
             }
-            if(has_ext) {
-                if(!string_append_string(&log_file_name, &ext)) {
-                    string_free_resources(&log_file_name);
-                    string_free_resources(&ext);
-                    return;
+            
+            if(!string_format_cstr(&number, "%d", file->sequence))
+                break;
+
+            if(!string_format_cstr(&log_file_name, ".%s", string_data(&number)))
+                break;
+            
+            if(has_ext && !string_append_string(&log_file_name, &ext))
+                break;
+
+            log_file_info_write_attribute(file, "sequence", &number, false);
+            if(ctx->max_archive_files != 0 || ctx->max_archive_days != 0)
+            {
+                t = time(NULL);
+                if(!string_format_cstr(
+                    &log_files,
+                    "%s?%lld|",
+                    string_data(&log_file_name),
+                    (int64_t)t))
+                {
+                    break;
                 }
+
+                log_file_info_write_attribute(file, "log_files", &log_files, true);
             }
+            result = true;
             break;
         case FILE_ARCHIVE_NUMBER_DATE:
             char datetime[256];
-            time_t t = time(NULL);
             struct tm time_value = *localtime(&t);
             size_t count = strftime(datetime, 256, string_date(&ctx->archive_date_format), &time_value);
-            if(count == 0) {
-                string_free_resources(&log_file_name);
-                return;
+            if(count == 0)
+                break;
+
+            has_ext = string_strip_extension(&log_file_name, &ext);
+            if( !string_append_cstr(&log_file_name, ".") || 
+                !string_append_cstr_part(&log_file_name, datetime, 0, count)) 
+            {
+                break;
             }
 
-            bool has_ext = string_strip_extension(&log_file_name, &ext);
-            if(!string_append_cstr_part(&log_file_name, datetime, 0, count)) {
-                string_free_resources(&ext);
-                string_free_resources(&log_file_name);
-                return;
-            }
-            if(has_ext) {
-                if(!string_append_string(&log_file_name, &ext)) {
-                    string_free_resources(&log_file_name);
-                    string_free_resources(&ext);
-                    return;
-                }
-            }
+            if(has_ext && !string_append_string(&log_file_name, &ext))
+                break;
+
+            result = true;
             break;
     }
 
-    bool was_open = file->file != NULL;
-    if(was_open)
-        fclose(file->file);
+    if(result) {
+        bool was_open = file->file != NULL;
+        if(was_open)
+            fclose(file->file);
 
-    rename(string_data(&file->name), string_data(&log_file_name));
+        rename(string_data(&file->name), string_data(&log_file_name));
 
-    string_free_resources(&log_file_name);
+        if(was_open) {
+            file->file = fopen(string_data(&file->name), "w+");
+            if(!file->file)
+                goto end;
+        }
 
-    if(was_open) {
-        file->file = fopen(string_data(&file->name), "w+");
-        if(!file->file)
-            return;
+        if(ctx->archive_timing == FILE_ARCHIVE_NUMBER_SEQUENCE)
+            file->sequence++;
+
+        if(ctx->archive_numbering != FILE_ARCHIVE_NUMBER_NONE)
+            log_file_delete_old_archives(ctx, file, &log_file_name, &archive_file_pattern, t);
     }
 
-    if(ctx->archive_timing == FILE_ARCHIVE_NUMBER_SEQUENCE)
-        file->sequence++;
+    end:
+    string_free_resources(&log_file_name);
+    string_free_resources(&ext);
+    string_free_resources(&number);
+    string_free_resources(&archive_file_pattern);
 }
 
 static bool log_file_day_passed(struct tm* creation_time, struct tm* current_time, int day) {

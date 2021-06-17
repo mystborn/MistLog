@@ -1,6 +1,7 @@
 #include <mist_log.h>
 
 #include <time.h>
+#include <stdio.h>
 
 #ifdef _MSC_VER
 
@@ -23,8 +24,6 @@
 #endif
 
 #endif
-
-// TODO: Max Archive Files
 
 struct LogFormatTime {
     String format;
@@ -1172,7 +1171,7 @@ static bool log_file_info_attribute(struct LogFile* file, char* attrib, String* 
 
         String new_line = string_create("\n");
         size_t line_count;
-        String* lines = lstring_split(&file_contents, &new_line, NULL, -1, &line_count, true, true);
+        String* lines = string_split(&file_contents, &new_line, NULL, -1, &line_count, true, true);
         if(!lines) {
             string_free_resources(&log_info);
             string_free_resources(&file_contents);
@@ -1271,7 +1270,7 @@ static bool log_file_info_handle_attribute(
             found = true;
         } else {
             // Not the attribute. Copy it over to the temp file.
-            if(fputs(line, temp) < 0) {
+            if(fprintf(temp, "%s\n", line) < 0) {
                 result = false;
                 break;
             }
@@ -1280,7 +1279,7 @@ static bool log_file_info_handle_attribute(
 
     // If the result wasn't found, append it to the end of the file.
     if(result && !found) {
-        if(fprintf(temp, "%s=%s", attrib, string_data(value)) < 0) {
+        if(fprintf(temp, "%s=%s\n", attrib, string_data(value)) < 0) {
             result = false;
         }
     }
@@ -1361,7 +1360,7 @@ static bool log_file_info_handle_attribute(
                 handle_attrib(log_info_file, lines + i, attrib, ctx);
                 found = true;
             } else {
-                if(fprintf(log_info_file, "%s", string_data(lines + i)) < 0) {
+                if(fprintf(log_info_file, "%s\n", string_data(lines + i)) < 0) {
                     result = false;
                     break;
                 }
@@ -1383,14 +1382,17 @@ static bool log_file_info_handle_attribute(
 #endif
 }
 
-static void log_file_info_write_attribute_impl(FILE* file, char* current_line, char* attrib, void* ctx) {
+static void log_file_info_write_attribute_impl(FILE* file, String* current_line, char* attrib, void* ctx) {
     String* str = ctx;
-    fprintf(file, "%s=%s", attrib, string_data(str));
+    fprintf(file, "%s=%s\n", attrib, string_data(str));
 }
 
-static void log_file_info_append_attribute_impl(FILE* file, char* current_line, char* attrib, void* ctx) {
+static void log_file_info_append_attribute_impl(FILE* file, String* current_line, char* attrib, void* ctx) {
     String* str = ctx;
-    fprintf(file, "%s%s", current_line, string_data(str));
+    if(current_line)
+        fprintf(file, "%s%s\n", string_data(current_line), string_data(str));
+    else
+        fprintf(file, "%s=%s\n", attrib, string_data(str));
 }
 
 static bool log_file_info_write_attribute(struct LogFile* file, char* attrib, String* value) {
@@ -1484,7 +1486,7 @@ static uint64_t log_file_size(struct LogFile* file) {
 }
 
 static struct LogFile* log_file_open(struct LogFileTargetContext* ctx, String* fname) {
-    for(int i = 0; i < ctx->files; i++) {
+    for(int i = 0; i < ctx->files_count; i++) {
         if(string_equals_string(&ctx->files[i].name, fname)) {
             if(!ctx->keep_files_open) {
                 ctx->files[i].file = fopen(string_data(fname), "a");
@@ -1497,7 +1499,7 @@ static struct LogFile* log_file_open(struct LogFileTargetContext* ctx, String* f
     }
 
     if(ctx->files_count == ctx->files_capacity) {
-        size_t capacity = ctx->files_capacity * 2;
+        size_t capacity = ctx->files_capacity == 0 ? 2 : ctx->files_capacity * 2;
         void* buffer = realloc(ctx->files, sizeof(*ctx->files) * capacity);
         if(!buffer)
             return NULL;
@@ -1581,7 +1583,7 @@ static void log_info_delete_files_on_days_impl(FILE* file, String* current_line,
 
     String separator = string_create("|");
     size_t count;
-    String* files = string_split(&value, &separator, NULL, STRING_SPLIT_ALLOCATE, &count, true, true);
+    files = string_split(&value, &separator, NULL, STRING_SPLIT_ALLOCATE, &count, true, true);
     if(!files)
         goto end;
 
@@ -1618,9 +1620,9 @@ static void log_info_delete_files_on_days_impl(FILE* file, String* current_line,
 
     end:
         if(processing)
-            fputs(string_data(&value), file);
+            fprintf(file, "%s\n", string_data(&value));
         else
-            fputs(string_data(current_line), file);
+            fprintf(file, "%s\n", string_data(current_line));
 
         string_free_resources(&fname);
         string_free_resources(&value);
@@ -1645,7 +1647,7 @@ static void log_info_delete_files_on_count_impl(FILE* file, String* current_line
 
     String separator = string_create("|");
     size_t count;
-    String* files = string_split(&value, &separator, NULL, STRING_SPLIT_ALLOCATE, &count, true, true);
+    files = string_split(&value, &separator, NULL, STRING_SPLIT_ALLOCATE, &count, true, true);
     if(!files)
         goto end;
 
@@ -1660,7 +1662,6 @@ static void log_info_delete_files_on_count_impl(FILE* file, String* current_line
     }
 
     string_clear(&value);
-    bool processing = true;
     for(; i < count; i++) {
         if(processing) {
             processing = string_append_string(&value, files + i) && string_append_cstr(&value, "|");
@@ -1670,9 +1671,9 @@ static void log_info_delete_files_on_count_impl(FILE* file, String* current_line
 
     end:
         if(processing)
-            fputs(string_data(&value), file);
+            fprintf(file, "%s\n", string_data(&value));
         else
-            fputs(string_data(current_line), file);
+            fprintf(file, "%s\n", string_data(current_line));
         string_free_resources(&fname);
         string_free_resources(&value);
         free(files);
@@ -1729,7 +1730,7 @@ static void log_file_delete_old_archives(
         delete_ctx.value = ctx->max_archive_days;
         delete_ctx.new_file = log_archive_name;
         log_info_delete_files_on_days(file, &delete_ctx);
-    } else {
+    } else if(ctx->max_archive_files > 0) {
         // Todo: Optimize this using FindNextFile/glob.
         struct LogArchiveDeleteContext delete_ctx;
         delete_ctx.value = ctx->max_archive_files;
@@ -1738,18 +1739,22 @@ static void log_file_delete_old_archives(
     }
 }
 
-static void log_file_archive(
+static void log_file_archive_impl(
     struct LogFileTargetContext* ctx, 
     struct LogFile* file,
     enum LogLevel log_level,
     const char* calling_file,
     const char* function,
     uint32_t line,
-    String* msg)
+    ...)
 {
     String log_file_name = string_create("");
-    if(!___log_format(ctx->archive_file_name, log_level, calling_file, function, line, &log_file_name, "%s", msg))
+
+    va_list list;
+    va_start(list, line);
+    if(!___log_format(ctx->archive_file_name, log_level, calling_file, function, line, &log_file_name, "%s", list))
         return;
+    va_end(list);
 
     String ext = string_create("");
     String archive_file_pattern = string_create("");
@@ -1784,27 +1789,13 @@ static void log_file_archive(
             if(has_ext && !string_append_string(&log_file_name, &ext))
                 break;
 
-            log_file_info_write_attribute(file, "sequence", &number, false);
-            if(ctx->max_archive_files != 0 || ctx->max_archive_days != 0)
-            {
-                t = time(NULL);
-                if(!string_format_cstr(
-                    &log_files,
-                    "%s?%lld|",
-                    string_data(&log_file_name),
-                    (int64_t)t))
-                {
-                    break;
-                }
-
-                log_file_info_write_attribute(file, "log_files", &log_files, true);
-            }
+            log_file_info_write_attribute(file, "sequence", &number);
             result = true;
             break;
         case FILE_ARCHIVE_NUMBER_DATE:
             char datetime[256];
             struct tm time_value = *localtime(&t);
-            size_t count = strftime(datetime, 256, string_date(&ctx->archive_date_format), &time_value);
+            size_t count = strftime(datetime, 256, string_data(&ctx->archive_date_format), &time_value);
             if(count == 0)
                 break;
 
@@ -1843,10 +1834,22 @@ static void log_file_archive(
     }
 
     end:
-    string_free_resources(&log_file_name);
-    string_free_resources(&ext);
-    string_free_resources(&number);
-    string_free_resources(&archive_file_pattern);
+        string_free_resources(&log_file_name);
+        string_free_resources(&ext);
+        string_free_resources(&number);
+        string_free_resources(&archive_file_pattern);
+}
+
+static void log_file_archive(
+    struct LogFileTargetContext* ctx, 
+    struct LogFile* file,
+    enum LogLevel log_level,
+    const char* calling_file,
+    const char* function,
+    uint32_t line,
+    String* msg)
+{
+    log_file_archive_impl(ctx, file, log_level, calling_file, function, line, string_data(msg));
 }
 
 static bool log_file_day_passed(struct tm* creation_time, struct tm* current_time, int day) {
@@ -1897,20 +1900,20 @@ static void log_file_archive_if_needed(
         double difference;
         switch(ctx->archive_timing) {
             case FILE_ARCHIVE_DAY:
-                time_t file_time = mktime(&file->creation_time);
-                double difference = difftime(current_time, file_time);
+                file_time = mktime(&file->creation_time);
+                difference = difftime(current_time, file_time);
                 if(difference >= 86400)
                     log_file_archive(ctx, file, log_level, calling_file, function, line, msg);
                 break;
             case FILE_ARCHIVE_HOUR:
-                time_t file_time = mktime(&file->creation_time);
-                double difference = difftime(current_time, file_time);
+                file_time = mktime(&file->creation_time);
+                difference = difftime(current_time, file_time);
                 if(difference >= 3600)
                     log_file_archive(ctx, file, log_level, calling_file, function, line, msg);
                 break;
             case FILE_ARCHIVE_MINUTE:
-                time_t file_time = mktime(&file->creation_time);
-                double difference = difftime(current_time, file_time);
+                file_time = mktime(&file->creation_time);
+                difference = difftime(current_time, file_time);
                 if(difference >= 60)
                     log_file_archive(ctx, file, log_level, calling_file, function, line, msg);
                 break;
@@ -1970,15 +1973,16 @@ static void log_file_log(enum LogLevel log_level, const char* file, const char* 
         return;
     }
 
-    log_file_archive_if_needed(ctx, log_file, log_level, file, function, line, msg);
+    fprintf(log_file->file, "%s\n", string_data(msg));
 
-    fputs(string_data(msg), log_file->file);
 
     if(!ctx->keep_files_open)
         fclose(log_file->file);
+
+    log_file_archive_if_needed(ctx, log_file, log_level, file, function, line, msg);
 }
 
-LogTarget* log_target_file_create(const char* layout, enum LogLevel min_level, enum LogLevel max_level, struct LogFileTargetContext* ctx) {
+LOG_EXPORT LogTarget* log_target_file_create(const char* layout, enum LogLevel min_level, enum LogLevel max_level, struct LogFileTargetContext* ctx) {
     LogTarget* target = malloc(sizeof(*target));
     if(!target)
         return NULL;

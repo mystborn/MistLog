@@ -212,7 +212,7 @@ LOG_EXPORT bool log_file_target_context_archive_number_date(struct LogFileTarget
 
 LOG_EXPORT bool log_file_target_context_keep_files_open(struct LogFileTargetContext* ctx);
 
-LogTarget* log_target_file_create(const char* layout, enum LogLevel min_level, enum LogLevel max_level, struct LogFileTargetContext* ctx);
+LOG_EXPORT LogTarget* log_target_file_create(const char* layout, enum LogLevel min_level, enum LogLevel max_level, struct LogFileTargetContext* ctx);
 
 /**
  * Registers a custom LogLayoutRenderer.

@@ -225,56 +225,56 @@ LOG_EXPORT LogTarget* log_target_file_create(const char* layout, enum LogLevel m
  * 
  * @remarks The arguments passed to the create function can be easily parsed using ___log_format_read_arg_name and ___log_format_read_arg_value.
  */
-LOG_EXPORT bool ___log_register_log_format_creator(const char* name, struct LogLayoutRenderer* (*create)(char* text, size_t start, size_t count, void* ctx), void* ctx, void (*free)(void*));
+LOG_EXPORT bool mist_log_register_log_format_creator(const char* name, struct LogLayoutRenderer* (*create)(char* text, size_t start, size_t count, void* ctx), void* ctx, void (*free)(void*));
 
 /**
  * Converts a layout format string into a LogFormat value.
  * 
  * @remarks This function is mostly meant to be used by custom LogTarget constructors.
  */
-LOG_EXPORT struct LogFormat* ___log_parse_format(char* format, size_t start, size_t count);
+LOG_EXPORT struct LogFormat* mist_log_parse_format(char* format, size_t start, size_t count);
 
 /**
  * Frees a LogFormat value.
  */
-LOG_EXPORT void ___log_format_free(struct LogFormat* format);
+LOG_EXPORT void mist_log_format_free(struct LogFormat* format);
 
 /**
  * Reads the name of the next argument in the argument list of a layout renderer format string.
  */
-LOG_EXPORT bool ___log_format_read_arg_name(char* text, size_t* start, size_t count, String* name);
+LOG_EXPORT bool mist_log_format_read_arg_name(char* text, size_t* start, size_t count, String* name);
 
 /**
  * Reads the value of an argument in the argument list of a layout renderer format string. Can either append the result to a string or return a nested LogFormat value.
  */
-LOG_EXPORT bool ___log_format_read_arg_value(char* text, size_t* start, size_t count, bool as_format, String* value, struct LogFormat** format);
+LOG_EXPORT bool mist_log_format_read_arg_value(char* text, size_t* start, size_t count, bool as_format, String* value, struct LogFormat** format);
 
 /**
  * Given a LogFormat, converts a raw log message into a formatted log message.
  * 
  * @remarks Mostly intended to make testing custom LogLayoutRenderers easier.
  */
-LOG_EXPORT bool ___log_format(struct LogFormat* log_format, enum LogLevel level, const char* file, const char* function, uint32_t line, String* message, char* format_string, va_list args);
+LOG_EXPORT bool mist_log_format(struct LogFormat* log_format, enum LogLevel level, const char* file, const char* function, uint32_t line, String* message, char* format_string, va_list args);
 
 /**
  * Logs a string value using the specified logger. Does not support logging the calling function name.
  */
-LOG_EXPORT bool ___log_string(Logger* logger, enum LogLevel log_level, const char* file, int line, const String* message, ...);
+LOG_EXPORT bool mist_log_string(Logger* logger, enum LogLevel log_level, const char* file, int line, const String* message, ...);
 
 /**
  * Logs a string value using the specified logger.
  */
-LOG_EXPORT bool ___log_func_string(Logger* logger, enum LogLevel log_level, const char* file, const char* function, int line, const String* message, ...);
+LOG_EXPORT bool mist_log_func_string(Logger* logger, enum LogLevel log_level, const char* file, const char* function, int line, const String* message, ...);
 
 /**
  * Logs a c-string using the specified logger. Does not support logging the calling function name.
  */
-LOG_EXPORT bool ___log_cstr(Logger* logger, enum LogLevel log_level, const char* file, int line, const char* message, ...);
+LOG_EXPORT bool mist_log_cstr(Logger* logger, enum LogLevel log_level, const char* file, int line, const char* message, ...);
 
 /**
  * Logs a c-string using the specified logger.
  */
-LOG_EXPORT bool ___log_func_cstr(Logger* logger, enum LogLevel log_level, const char* file, const char* function, int line, const char* message, ...);
+LOG_EXPORT bool mist_log_func_cstr(Logger* logger, enum LogLevel log_level, const char* file, const char* function, int line, const char* message, ...);
 
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
@@ -284,68 +284,68 @@ LOG_EXPORT bool ___log_func_cstr(Logger* logger, enum LogLevel log_level, const 
 // If _Generic is available, prefer that over just using c-strings for the default
 // log message call.
 
-#define ___log_generic(logger, level, message, ...) \
+#define mist_log_generic(logger, level, message, ...) \
     _Generic(message, \
-        char*: ___log_func_cstr, \
-        const char*: ___log_func_cstr, \
-        String*: ___log_func_string, \
-        const String*: ___log_func_string)((logger), (level), __FILE__, __func__, __LINE__, message, ## __VA_ARGS__)
+        char*: mist_log_func_cstr, \
+        const char*: mist_log_func_cstr, \
+        String*: mist_log_func_string, \
+        const String*: mist_log_func_string)((logger), (level), __FILE__, __func__, __LINE__, message, ## __VA_ARGS__)
 
-#define log_trace(logger, message, ...) ___log_generic(logger, LOG_TRACE, message, __VA_ARGS__)
-#define log_debug(logger, message, ...) ___log_generic(logger, LOG_DEBUG, message, __VA_ARGS__)
-#define log_info(logger, message, ...) ___log_generic(logger, LOG_INFO, message, __VA_ARGS__)
-#define log_warn(logger, message, ...) ___log_generic(logger, LOG_WARN, message, __VA_ARGS__)
-#define log_error(logger, message, ...) ___log_generic(logger, LOG_ERROR, message, __VA_ARGS__)
-#define log_fatal(logger, message, ...) ___log_generic(logger, LOG_FATAL, message, __VA_ARGS__)
+#define log_trace(logger, message, ...) mist_log_generic(logger, LOG_TRACE, message, __VA_ARGS__)
+#define log_debug(logger, message, ...) mist_log_generic(logger, LOG_DEBUG, message, __VA_ARGS__)
+#define log_info(logger, message, ...) mist_log_generic(logger, LOG_INFO, message, __VA_ARGS__)
+#define log_warn(logger, message, ...) mist_log_generic(logger, LOG_WARN, message, __VA_ARGS__)
+#define log_error(logger, message, ...) mist_log_generic(logger, LOG_ERROR, message, __VA_ARGS__)
+#define log_fatal(logger, message, ...) mist_log_generic(logger, LOG_FATAL, message, __VA_ARGS__)
     
 
 #else // __STDC_VERSION__ >= 201112L
 
-#define log_trace(logger, ...) ___log_func_cstr((logger), LOG_TRACE, __FILE__, __func__, __LINE__, __VA_ARGS__)
-#define log_debug(logger, ...) ___log_func_cstr((logger), LOG_DEBUG, __FILE__, __func__, __LINE__, __VA_ARGS__)
-#define log_info(logger, ...) ___log_func_cstr((logger), LOG_INFO, __FILE__, __func__, __LINE__, __VA_ARGS__)
-#define log_warn(logger, ...) ___log_func_cstr((logger), LOG_WARN, __FILE__, __func__, __LINE__, __VA_ARGS__)
-#define log_error(logger, ...) ___log_func_cstr((logger), LOG_ERROR, __FILE__, __func__, __LINE__, __VA_ARGS__)
-#define log_fatal(logger, ...) ___log_func_cstr((logger), LOG_FATAL, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#define log_trace(logger, ...) mist_log_func_cstr((logger), LOG_TRACE, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#define log_debug(logger, ...) mist_log_func_cstr((logger), LOG_DEBUG, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#define log_info(logger, ...) mist_log_func_cstr((logger), LOG_INFO, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#define log_warn(logger, ...) mist_log_func_cstr((logger), LOG_WARN, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#define log_error(logger, ...) mist_log_func_cstr((logger), LOG_ERROR, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#define log_fatal(logger, ...) mist_log_func_cstr((logger), LOG_FATAL, __FILE__, __func__, __LINE__, __VA_ARGS__)
 
 #endif
 
-#define log_cstr_trace(logger, ...) ___log_func_cstr((logger), LOG_TRACE, __FILE__, __func__, __LINE__, __VA_ARGS__)
-#define log_cstr_debug(logger, ...) ___log_func_cstr((logger), LOG_DEBUG, __FILE__, __func__, __LINE__, __VA_ARGS__)
-#define log_cstr_info(logger, ...) ___log_func_cstr((logger), LOG_INFO, __FILE__, __func__, __LINE__, __VA_ARGS__)
-#define log_cstr_warn(logger, ...) ___log_func_cstr((logger), LOG_WARN, __FILE__, __func__, __LINE__, __VA_ARGS__)
-#define log_cstr_error(logger, ...) ___log_func_cstr((logger), LOG_ERROR, __FILE__, __func__, __LINE__, __VA_ARGS__)
-#define log_cstr_fatal(logger, ...) ___log_func_cstr((logger), LOG_FATAL, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#define log_cstr_trace(logger, ...) mist_log_func_cstr((logger), LOG_TRACE, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#define log_cstr_debug(logger, ...) mist_log_func_cstr((logger), LOG_DEBUG, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#define log_cstr_info(logger, ...) mist_log_func_cstr((logger), LOG_INFO, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#define log_cstr_warn(logger, ...) mist_log_func_cstr((logger), LOG_WARN, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#define log_cstr_error(logger, ...) mist_log_func_cstr((logger), LOG_ERROR, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#define log_cstr_fatal(logger, ...) mist_log_func_cstr((logger), LOG_FATAL, __FILE__, __func__, __LINE__, __VA_ARGS__)
 
-#define log_string_trace(logger, ...) ___log_func_string((logger), LOG_TRACE, __FILE__, __func__, __LINE__, __VA_ARGS__)
-#define log_string_debug(logger, ...) ___log_func_string((logger), LOG_DEBUG, __FILE__, __func__, __LINE__, __VA_ARGS__)
-#define log_string_info(logger, ...) ___log_func_string((logger), LOG_INFO, __FILE__, __func__, __LINE__, __VA_ARGS__)
-#define log_string_warn(logger, ...) ___log_func_string((logger), LOG_WARN, __FILE__, __func__, __LINE__, __VA_ARGS__)
-#define log_string_error(logger, ...) ___log_func_string((logger), LOG_ERROR, __FILE__, __func__, __LINE__, __VA_ARGS__)
-#define log_string_fatal(logger, ...) ___log_func_string((logger), LOG_FATAL, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#define log_string_trace(logger, ...) mist_log_func_string((logger), LOG_TRACE, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#define log_string_debug(logger, ...) mist_log_func_string((logger), LOG_DEBUG, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#define log_string_info(logger, ...) mist_log_func_string((logger), LOG_INFO, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#define log_string_warn(logger, ...) mist_log_func_string((logger), LOG_WARN, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#define log_string_error(logger, ...) mist_log_func_string((logger), LOG_ERROR, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#define log_string_fatal(logger, ...) mist_log_func_string((logger), LOG_FATAL, __FILE__, __func__, __LINE__, __VA_ARGS__)
 
 #else // __STDC_VERSION__ >= 199901L
 
-#define log_trace(logger, ...) ___log_cstr((logger), LOG_TRACE, __FILE__, __LINE__, __VA_ARGS__)
-#define log_debug(logger, ...) ___log_cstr((logger), LOG_DEBUG, __FILE__, __LINE__, __VA_ARGS__)
-#define log_info(logger, ...) ___log_cstr((logger), LOG_INFO, __FILE__, __LINE__, __VA_ARGS__)
-#define log_warn(logger, ...) ___log_cstr((logger), LOG_WARN, __FILE__, __LINE__, __VA_ARGS__)
-#define log_error(logger, ...) ___log_cstr((logger), LOG_ERROR, __FILE__, __LINE__, __VA_ARGS__)
-#define log_fatal(logger, ...) ___log_cstr((logger), LOG_FATAL, __FILE__, __LINE__, __VA_ARGS__)
+#define log_trace(logger, ...) mist_log_cstr((logger), LOG_TRACE, __FILE__, __LINE__, __VA_ARGS__)
+#define log_debug(logger, ...) mist_log_cstr((logger), LOG_DEBUG, __FILE__, __LINE__, __VA_ARGS__)
+#define log_info(logger, ...) mist_log_cstr((logger), LOG_INFO, __FILE__, __LINE__, __VA_ARGS__)
+#define log_warn(logger, ...) mist_log_cstr((logger), LOG_WARN, __FILE__, __LINE__, __VA_ARGS__)
+#define log_error(logger, ...) mist_log_cstr((logger), LOG_ERROR, __FILE__, __LINE__, __VA_ARGS__)
+#define log_fatal(logger, ...) mist_log_cstr((logger), LOG_FATAL, __FILE__, __LINE__, __VA_ARGS__)
 
-#define log_cstr_trace(logger, ...) ___log_cstr((logger), LOG_TRACE, __FILE__, __LINE__, __VA_ARGS__)
-#define log_cstr_debug(logger, ...) ___log_cstr((logger), LOG_DEBUG, __FILE__, __LINE__, __VA_ARGS__)
-#define log_cstr_info(logger, ...) ___log_cstr((logger), LOG_INFO, __FILE__, __LINE__, __VA_ARGS__)
-#define log_cstr_warn(logger, ...) ___log_cstr((logger), LOG_WARN, __FILE__, __LINE__, __VA_ARGS__)
-#define log_cstr_error(logger, ...) ___log_cstr((logger), LOG_ERROR, __FILE__, __LINE__, __VA_ARGS__)
-#define log_cstr_fatal(logger, ...) ___log_cstr((logger), LOG_FATAL, __FILE__, __LINE__, __VA_ARGS__)
+#define log_cstr_trace(logger, ...) mist_log_cstr((logger), LOG_TRACE, __FILE__, __LINE__, __VA_ARGS__)
+#define log_cstr_debug(logger, ...) mist_log_cstr((logger), LOG_DEBUG, __FILE__, __LINE__, __VA_ARGS__)
+#define log_cstr_info(logger, ...) mist_log_cstr((logger), LOG_INFO, __FILE__, __LINE__, __VA_ARGS__)
+#define log_cstr_warn(logger, ...) mist_log_cstr((logger), LOG_WARN, __FILE__, __LINE__, __VA_ARGS__)
+#define log_cstr_error(logger, ...) mist_log_cstr((logger), LOG_ERROR, __FILE__, __LINE__, __VA_ARGS__)
+#define log_cstr_fatal(logger, ...) mist_log_cstr((logger), LOG_FATAL, __FILE__, __LINE__, __VA_ARGS__)
 
-#define log_string_trace(logger, ...) ___log_string((logger), LOG_TRACE, __FILE__, __LINE__, __VA_ARGS__)
-#define log_string_debug(logger, ...) ___log_string((logger), LOG_DEBUG, __FILE__, __LINE__, __VA_ARGS__)
-#define log_string_info(logger, ...) ___log_string((logger), LOG_INFO, __FILE__, __LINE__, __VA_ARGS__)
-#define log_string_warn(logger, ...) ___log_string((logger), LOG_WARN, __FILE__, __LINE__, __VA_ARGS__)
-#define log_string_error(logger, ...) ___log_string((logger), LOG_ERROR, __FILE__, __LINE__, __VA_ARGS__)
-#define log_string_fatal(logger, ...) ___log_string((logger), LOG_FATAL, __FILE__, __LINE__, __VA_ARGS__)
+#define log_string_trace(logger, ...) mist_log_string((logger), LOG_TRACE, __FILE__, __LINE__, __VA_ARGS__)
+#define log_string_debug(logger, ...) mist_log_string((logger), LOG_DEBUG, __FILE__, __LINE__, __VA_ARGS__)
+#define log_string_info(logger, ...) mist_log_string((logger), LOG_INFO, __FILE__, __LINE__, __VA_ARGS__)
+#define log_string_warn(logger, ...) mist_log_string((logger), LOG_WARN, __FILE__, __LINE__, __VA_ARGS__)
+#define log_string_error(logger, ...) mist_log_string((logger), LOG_ERROR, __FILE__, __LINE__, __VA_ARGS__)
+#define log_string_fatal(logger, ...) mist_log_string((logger), LOG_FATAL, __FILE__, __LINE__, __VA_ARGS__)
 
 #endif
 

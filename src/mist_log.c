@@ -84,7 +84,7 @@ static struct LogLayoutRendererFinder log_renderer_finder = { NULL, 0, 0 };
 // SECION: Layout Renderers
 // ========================
 
-LOG_EXPORT bool ___log_format_read_arg_name(char* text, size_t* start, size_t count, String* name) {
+LOG_EXPORT bool mist_log_format_read_arg_name(char* text, size_t* start, size_t count, String* name) {
     for(size_t iter = 0; iter < count; iter++) {
         if(iter + 1 < count && text[*start] == '\\') {
             switch(text[*start + 1]) {
@@ -125,15 +125,15 @@ LOG_EXPORT bool ___log_format_read_arg_name(char* text, size_t* start, size_t co
     return true;
 }
 
-LOG_EXPORT bool ___log_format_read_arg_value(char* text, size_t* start, size_t count, bool as_format, String* value, struct LogFormat** format) {
+LOG_EXPORT bool mist_log_format_read_arg_value(char* text, size_t* start, size_t count, bool as_format, String* value, struct LogFormat** format) {
     if(as_format) {
-        *format = ___log_parse_format(text, *start, count);
+        *format = mist_log_parse_format(text, *start, count);
         if(!(*format))
             return false;
         (*start) += count;
         return true;
     } else {
-        return ___log_format_read_arg_name(text, start, count, value);
+        return mist_log_format_read_arg_name(text, start, count, value);
     }
 }
 
@@ -145,10 +145,10 @@ static bool log_message_append_uint(String* message, uint32_t number) {
     size_t current_size = string_size(message);
     size_t written = sprintf(string_cstr(message) + current_size, "%u", number);
 
-    if(___sso_string_is_long(message))
-        ___sso_string_long_set_size(message, current_size + written);
+    if(sso_string_is_long(message))
+        sso_string_long_set_size(message, current_size + written);
     else
-        ___sso_string_short_set_size(message, current_size + written);
+        sso_string_short_set_size(message, current_size + written);
 
     return true;
 }
@@ -234,10 +234,10 @@ static bool log_format_date_time(enum LogLevel log_level, const char* file, cons
     }
     while(written == 0);
 
-    if(___sso_string_is_long(message))
-        ___sso_string_long_set_size(message, current_size + written);
+    if(sso_string_is_long(message))
+        sso_string_long_set_size(message, current_size + written);
     else
-        ___sso_string_short_set_size(message, current_size + written);
+        sso_string_short_set_size(message, current_size + written);
 
     return true;
 }
@@ -269,14 +269,14 @@ static struct LogLayoutRenderer* log_renderer_create_date_time(char* text, size_
     size_t arg_start = start;
     while(arg_start - start < count) {
         string_clear(&arg_name);
-        if(!___log_format_read_arg_name(text, &arg_start, count - (arg_start - start), &arg_name))
+        if(!mist_log_format_read_arg_name(text, &arg_start, count - (arg_start - start), &arg_name))
             break;
 
         arg_start++;
 
         if(text[arg_start - 1] == '=') {
             string_clear(&arg_value);
-            if(!___log_format_read_arg_value(text, &arg_start, count - (arg_start - start), false, &arg_value, NULL))
+            if(!mist_log_format_read_arg_value(text, &arg_start, count - (arg_start - start), false, &arg_value, NULL))
                 break;
         }
 
@@ -558,7 +558,7 @@ static bool log_format_finder_init() {
         return false;
 }
 
-LOG_EXPORT bool ___log_register_log_format_creator(const char* name, struct LogLayoutRenderer* (*create)(char* text, size_t start, size_t count, void* ctx), void* ctx, void (*free)(void* ctx)) {
+LOG_EXPORT bool mist_log_register_log_format_creator(const char* name, struct LogLayoutRenderer* (*create)(char* text, size_t start, size_t count, void* ctx), void* ctx, void (*free)(void* ctx)) {
     struct LogLayoutRendererCreator* creator = malloc(sizeof(*creator));
     if(!creator)
         return false;
@@ -583,7 +583,7 @@ LOG_EXPORT bool ___log_register_log_format_creator(const char* name, struct LogL
     return true;
 }
 
-static struct LogLayoutRenderer* ___log_create_renderer(char* format, size_t start, size_t count) {
+static struct LogLayoutRenderer* mist_log_create_renderer(char* format, size_t start, size_t count) {
     size_t name_length = 0;
     for(int i = 0; i < count; i++) {
         if(format[i + start] == ':') {
@@ -608,7 +608,7 @@ static struct LogLayoutRenderer* ___log_create_renderer(char* format, size_t sta
     return NULL;
 }
 
-static struct LogLayoutRenderer* ___log_create_text_renderer(char* format, size_t start, size_t count) {
+static struct LogLayoutRenderer* mist_log_create_text_renderer(char* format, size_t start, size_t count) {
     String* part = string_create_ref("");
     if(!part)
         return NULL;
@@ -634,7 +634,7 @@ static struct LogLayoutRenderer* ___log_create_text_renderer(char* format, size_
 // SECTION: Formatting
 // ===================
 
-struct LogFormat* ___log_parse_format(char* format, size_t start, size_t count) {
+struct LogFormat* mist_log_parse_format(char* format, size_t start, size_t count) {
     if (!log_format_finder_init())
         return NULL;
     // "${time:utc=true:format=%x %X} | ${upper:inner=${level}} ${level} | ${file} | ${message}";
@@ -664,7 +664,7 @@ struct LogFormat* ___log_parse_format(char* format, size_t start, size_t count) 
                     renderers = buffer;
                 }
 
-                struct LogLayoutRenderer* renderer = ___log_create_text_renderer(format, format_start, i - format_start);
+                struct LogLayoutRenderer* renderer = mist_log_create_text_renderer(format, format_start, i - format_start);
                 if (!renderer)
                     goto error;
                 renderers[renderer_count++] = renderer;
@@ -685,7 +685,7 @@ struct LogFormat* ___log_parse_format(char* format, size_t start, size_t count) 
                     // If all braces have been matched for the current layer, create a layout renderer
                     // from the matched string.
                     if(--brace_count == 0) {
-                        struct LogLayoutRenderer* renderer = ___log_create_renderer(format, format_start, i - format_start);
+                        struct LogLayoutRenderer* renderer = mist_log_create_renderer(format, format_start, i - format_start);
                         if(!renderer)
                             goto error;
                         
@@ -721,7 +721,7 @@ struct LogFormat* ___log_parse_format(char* format, size_t start, size_t count) 
             renderers = buffer;
         }
 
-        struct LogLayoutRenderer* renderer = ___log_create_text_renderer(format, format_start, start + count - format_start);
+        struct LogLayoutRenderer* renderer = mist_log_create_text_renderer(format, format_start, start + count - format_start);
         if(!renderer)
             goto error;
         renderers[renderer_count++] = renderer;
@@ -751,7 +751,7 @@ struct LogFormat* ___log_parse_format(char* format, size_t start, size_t count) 
         return NULL;
 }
 
-LOG_EXPORT void ___log_format_free(struct LogFormat* log_format) {
+LOG_EXPORT void mist_log_format_free(struct LogFormat* log_format) {
     if(!log_format)
         return;
 
@@ -764,7 +764,7 @@ LOG_EXPORT void ___log_format_free(struct LogFormat* log_format) {
     free(log_format);
 }
 
-LOG_EXPORT bool ___log_format(struct LogFormat* log_format, enum LogLevel level, const char* file, const char* function, uint32_t line, String* message, char* format_string, va_list args) {
+LOG_EXPORT bool mist_log_format(struct LogFormat* log_format, enum LogLevel level, const char* file, const char* function, uint32_t line, String* message, char* format_string, va_list args) {
     for(int i = 0; i < log_format->step_count; i++) {
         struct LogLayoutRenderer* step = log_format->steps[i];
         if(!step->append(level, file, function, line, message, step->ctx, format_string, args)) {
@@ -854,7 +854,7 @@ static bool log_log_impl(Logger* logger, enum LogLevel log_level, const char* fi
             continue;
 
         string_clear(&output);
-        if(!___log_format(target->format, log_level, file, function, line, &output, message, args))
+        if(!mist_log_format(target->format, log_level, file, function, line, &output, message, args))
             return false;
 
         target->log(log_level, file, function, line, &output, target->ctx);
@@ -868,7 +868,7 @@ static bool log_log_impl(Logger* logger, enum LogLevel log_level, const char* fi
     return true;
 }
 
-LOG_EXPORT bool ___log_string(Logger* logger, enum LogLevel log_level, const char* file, int line, const String* message, ...) {
+LOG_EXPORT bool mist_log_string(Logger* logger, enum LogLevel log_level, const char* file, int line, const String* message, ...) {
     va_list args;
     va_start(args, message);
 
@@ -879,7 +879,7 @@ LOG_EXPORT bool ___log_string(Logger* logger, enum LogLevel log_level, const cha
     return result;
 }
 
-LOG_EXPORT bool ___log_func_string(Logger* logger, enum LogLevel log_level, const char* file, const char* function, int line, const String* message, ...) {
+LOG_EXPORT bool mist_log_func_string(Logger* logger, enum LogLevel log_level, const char* file, const char* function, int line, const String* message, ...) {
     va_list args;
     va_start(args, message);
 
@@ -890,7 +890,7 @@ LOG_EXPORT bool ___log_func_string(Logger* logger, enum LogLevel log_level, cons
     return result;
 }
 
-LOG_EXPORT bool ___log_cstr(Logger* logger, enum LogLevel log_level, const char* file, int line, const char* message, ...) {
+LOG_EXPORT bool mist_log_cstr(Logger* logger, enum LogLevel log_level, const char* file, int line, const char* message, ...) {
     va_list args;
     va_start(args, message);
 
@@ -901,7 +901,7 @@ LOG_EXPORT bool ___log_cstr(Logger* logger, enum LogLevel log_level, const char*
     return result;
 }
 
-LOG_EXPORT bool ___log_func_cstr(Logger* logger, enum LogLevel log_level, const char* file, const char* function, int line, const char* message, ...) {
+LOG_EXPORT bool mist_log_func_cstr(Logger* logger, enum LogLevel log_level, const char* file, const char* function, int line, const char* message, ...) {
     va_list args;
     va_start(args, message);
 
@@ -925,7 +925,7 @@ LogTarget* log_target_console_create(const char* layout, enum LogLevel min_level
     if(!target)
         return NULL;
 
-    struct LogFormat* fmt = ___log_parse_format(layout, 0, strlen(layout));
+    struct LogFormat* fmt = mist_log_parse_format(layout, 0, strlen(layout));
     if(!fmt) {
         free(target);
         return NULL;
@@ -946,7 +946,7 @@ LOG_EXPORT struct LogFileTargetContext* log_file_target_context_create(char* fna
     if(!ctx)
         return NULL;
 
-    ctx->file_name = ___log_parse_format(fname, 0, strlen(fname));
+    ctx->file_name = mist_log_parse_format(fname, 0, strlen(fname));
     if(!ctx->file_name) {
         free(ctx);
         return NULL;
@@ -962,10 +962,10 @@ static void log_file_target_context_free_generic(void* ptr) {
 }
 
 LOG_EXPORT void log_file_target_context_free(struct LogFileTargetContext* ctx) {
-    ___log_format_free(ctx->file_name);
+    mist_log_format_free(ctx->file_name);
 
     if(ctx->archive_file_name)
-        ___log_format_free(ctx->archive_file_name);
+        mist_log_format_free(ctx->archive_file_name);
 
     if(ctx->files) {
         for(size_t i = 0; i < ctx->files_count; i++) {
@@ -985,7 +985,7 @@ LOG_EXPORT void log_file_target_context_free(struct LogFileTargetContext* ctx) {
 }
 
 LOG_EXPORT bool log_file_target_context_archive_fname(struct LogFileTargetContext* ctx, char* archive_fname) {
-    struct LogFormat* format = ___log_parse_format(archive_fname, 0, strlen(archive_fname));
+    struct LogFormat* format = mist_log_parse_format(archive_fname, 0, strlen(archive_fname));
     if(!format)
         return false;
 
@@ -1164,10 +1164,10 @@ static bool log_file_info_attribute(struct LogFile* file, char* attrib, String* 
         }
 
         string_cstr(&file_contents)[file_read_length] = '\0';
-        if(___sso_string_is_long(&file_contents))
-            ___sso_string_long_set_size(&file_contents, file_read_length);
+        if(sso_string_is_long(&file_contents))
+            sso_string_long_set_size(&file_contents, file_read_length);
         else
-            ___sso_string_short_set_size(&file_contents, file_read_length);
+            sso_string_short_set_size(&file_contents, file_read_length);
 
         String new_line = string_create("\n");
         size_t line_count;
@@ -1331,10 +1331,10 @@ static bool log_file_info_handle_attribute(
         }
 
         string_cstr(&file_contents)[file_read_length] = '\0';
-        if(___sso_string_is_long(&file_contents))
-            ___sso_string_long_set_size(&file_contents, file_read_length);
+        if(sso_string_is_long(&file_contents))
+            sso_string_long_set_size(&file_contents, file_read_length);
         else
-            ___sso_string_short_set_size(&file_contents, file_read_length);
+            sso_string_short_set_size(&file_contents, file_read_length);
 
         String new_line = string_create("\n");
         size_t line_count;
@@ -1752,7 +1752,7 @@ static void log_file_archive_impl(
 
     va_list list;
     va_start(list, line);
-    if(!___log_format(ctx->archive_file_name, log_level, calling_file, function, line, &log_file_name, "%s", list))
+    if(!mist_log_format(ctx->archive_file_name, log_level, calling_file, function, line, &log_file_name, "%s", list))
         return;
     va_end(list);
 
@@ -1964,7 +1964,7 @@ static void log_file_log(enum LogLevel log_level, const char* file, const char* 
     struct LogFileTargetContext* ctx = ptr;
     String fname = string_create("");
 
-    if(!___log_format(ctx->file_name, log_level, file, function, line, &fname, "%s", string_data(msg)))
+    if(!mist_log_format(ctx->file_name, log_level, file, function, line, &fname, "%s", string_data(msg)))
         return;
 
     struct LogFile* log_file = log_file_open(ctx, &fname);
@@ -1987,7 +1987,7 @@ LOG_EXPORT LogTarget* log_target_file_create(const char* layout, enum LogLevel m
     if(!target)
         return NULL;
 
-    struct LogFormat* fmt = ___log_parse_format(layout, 0, strlen(layout));
+    struct LogFormat* fmt = mist_log_parse_format(layout, 0, strlen(layout));
     if(!fmt) {
         free(target);
         return NULL;

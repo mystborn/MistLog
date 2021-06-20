@@ -208,7 +208,7 @@ LOG_EXPORT void log_file_target_archive_on_date(struct LogFileTargetContext* ctx
 
 LOG_EXPORT void log_file_target_context_archive_number_sequence(struct LogFileTargetContext* ctx);
 
-LOG_EXPORT bool log_file_target_context_archive_number_date(struct LogFileTargetContext* ctx, enum FileArchiveNumbering numbering, char* date_string);
+LOG_EXPORT bool log_file_target_context_archive_number_date(struct LogFileTargetContext* ctx, char* date_string);
 
 LOG_EXPORT bool log_file_target_context_keep_files_open(struct LogFileTargetContext* ctx);
 

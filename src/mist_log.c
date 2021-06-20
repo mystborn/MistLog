@@ -1041,7 +1041,7 @@ LOG_EXPORT void log_file_target_context_archive_number_sequence(struct LogFileTa
     ctx->archive_numbering = FILE_ARCHIVE_NUMBER_SEQUENCE;
 }
 
-LOG_EXPORT bool log_file_target_context_archive_number_date(struct LogFileTargetContext* ctx, enum FileArchiveNumbering numbering, char* date_string) {
+LOG_EXPORT bool log_file_target_context_archive_number_date(struct LogFileTargetContext* ctx, char* date_string) {
     ctx->archive_numbering = FILE_ARCHIVE_NUMBER_DATE;
     string_clear(&ctx->archive_date_format);
     return string_append_cstr(&ctx->archive_date_format, date_string);
@@ -1083,7 +1083,7 @@ static bool log_file_exists(String* fname) {
 }
 
 static bool log_file_info_attribute(struct LogFile* file, char* attrib, String* value) {
-    size_t ext_start = string_rfind_cstr(&file->name, string_size(&file->name), ".");
+    size_t ext_start = string_rfind_cstr(&file->name, 0, ".");
     String log_info = string_create("");
     if(!string_append_string(&log_info, &file->name))
         return false;
@@ -1170,7 +1170,7 @@ static bool log_file_info_attribute(struct LogFile* file, char* attrib, String* 
             sso_string_short_set_size(&file_contents, file_read_length);
 
         String new_line = string_create("\n");
-        size_t line_count;
+        int line_count;
         String* lines = string_split(&file_contents, &new_line, NULL, -1, &line_count, true, true);
         if(!lines) {
             string_free_resources(&log_info);
@@ -1179,22 +1179,19 @@ static bool log_file_info_attribute(struct LogFile* file, char* attrib, String* 
             return false;
         }
 
+        bool found = false;
         for(size_t i = 0; i < line_count; i++) {
-            if(string_starts_with_cstr(lines + i, attrib)) {
-                bool result = string_append_string_part(value, lines + i, attrib_length + 1, string_size(lines + i) - attrib_length - 1);
-                free(lines);
-                string_free_resources(&log_info);
-                string_free_resources(&file_contents);
-                fclose(log_info_file);
-                return result;
-            }
+            if(!found && string_starts_with_cstr(lines + i, attrib))
+                found = string_append_string_part(value, lines + i, attrib_length + 1, string_size(lines + i) - attrib_length - 1);
+
+            string_free_resources(lines + i);
         }
 
         free(lines);
         string_free_resources(&log_info);
         string_free_resources(&file_contents);
         fclose(log_info_file);
-        return false;
+        return found;
     }
 
     string_free_resources(&log_info);
@@ -1210,7 +1207,7 @@ static bool log_file_info_handle_attribute(
     void* ctx, 
     void (*handle_attrib)(FILE* file, String* current_line, char* attrib, void* ctx))
 {
-    size_t ext_start = string_rfind_cstr(&file->name, string_size(&file->name), ".");
+    size_t ext_start = string_rfind_cstr(&file->name, 0, ".");
     String log_info = string_create("");
     if(!string_append_string(&log_info, &file->name))
         return false;
@@ -1224,7 +1221,7 @@ static bool log_file_info_handle_attribute(
         return false;
     }
 
-    FILE* log_info_file = fopen(string_data(&log_info), "r");
+    FILE* log_info_file = fopen(string_data(&log_info), "a+");
     if(!log_info_file) {
         string_free_resources(&log_info);
         return false;
@@ -1240,6 +1237,8 @@ static bool log_file_info_handle_attribute(
     ssize_t line_size;
 
     bool result = true;
+
+    fseek(log_info_file, 0, SEEK_SET);
 
     // Create a temporary file to copy the old data over to. This is the only
     // way to replace existing data unfortunately.
@@ -1290,7 +1289,7 @@ static bool log_file_info_handle_attribute(
 
     // Replace the old log file with the new one if everything has been successful so far.
     if(result)
-        result = remove(string_data(&log_info)) == 0 && rename(string_data(&temp_name), string_data(&log_info));
+        result = remove(string_data(&log_info)) == 0 && rename(string_data(&temp_name), string_data(&log_info)) == 0;
 
     // free the remaining resources.
     free(line);
@@ -1337,7 +1336,7 @@ static bool log_file_info_handle_attribute(
             sso_string_short_set_size(&file_contents, file_read_length);
 
         String new_line = string_create("\n");
-        size_t line_count;
+        int line_count;
         String* lines = string_split(&file_contents, &new_line, NULL, -1, &line_count, true, true);
         string_free_resources(&file_contents);
         if(!lines) {
@@ -1356,15 +1355,19 @@ static bool log_file_info_handle_attribute(
         bool found = false;
 
         for(size_t i = 0; i < line_count; i++) {
-            if(string_starts_with_cstr(lines + i, attrib)) {
-                handle_attrib(log_info_file, lines + i, attrib, ctx);
-                found = true;
-            } else {
-                if(fprintf(log_info_file, "%s\n", string_data(lines + i)) < 0) {
-                    result = false;
-                    break;
+            if (result) {
+                if (string_starts_with_cstr(lines + i, attrib)) {
+                    handle_attrib(log_info_file, lines + i, attrib, ctx);
+                    found = true;
+                }
+                else {
+                    if (fprintf(log_info_file, "%s\n", string_data(lines + i)) < 0) {
+                        result = false;
+                    }
                 }
             }
+            
+            string_free_resources(lines + i);
         }
 
         if(result && !found) {
@@ -1455,6 +1458,7 @@ static void log_file_sequence(struct LogFile* file) {
             file->sequence = sequence_num + 1;
         }
         string_free_resources(&sequence);
+        return;
     }
 
     file->sequence = 1;
@@ -1508,7 +1512,7 @@ static struct LogFile* log_file_open(struct LogFileTargetContext* ctx, String* f
         ctx->files_capacity = capacity;
     }
 
-    struct LogFile* file = ctx->files + ctx->files_count;
+    struct LogFile* file = ctx->files + ctx->files_count++;
 
     if(log_file_exists(fname)) {
         file->file = fopen(string_data(fname), "a");
@@ -1544,7 +1548,7 @@ static struct LogFile* log_file_open(struct LogFileTargetContext* ctx, String* f
 }
 
 static bool string_strip_extension(String* value, String* ext) {
-    size_t position = string_rfind_cstr(value, string_size(value), ".");
+    size_t position = string_rfind_cstr(value, 0, ".");
     if(position == SIZE_MAX)
         return false;
 
@@ -1582,7 +1586,7 @@ static void log_info_delete_files_on_days_impl(FILE* file, String* current_line,
         goto end;
 
     String separator = string_create("|");
-    size_t count;
+    int count;
     files = string_split(&value, &separator, NULL, STRING_SPLIT_ALLOCATE, &count, true, true);
     if(!files)
         goto end;
@@ -1646,7 +1650,7 @@ static void log_info_delete_files_on_count_impl(FILE* file, String* current_line
         goto end;
 
     String separator = string_create("|");
-    size_t count;
+    int count;
     files = string_split(&value, &separator, NULL, STRING_SPLIT_ALLOCATE, &count, true, true);
     if(!files)
         goto end;
@@ -1654,7 +1658,7 @@ static void log_info_delete_files_on_count_impl(FILE* file, String* current_line
     string_clear(&value);
     processing = true;
     int i = 0;
-    int files_to_delete = count - ctx->value;
+    int files_to_delete = count - ctx->value + 1;
 
     for(; i < files_to_delete; i++) {
         remove(string_data(files + i));
@@ -1664,14 +1668,23 @@ static void log_info_delete_files_on_count_impl(FILE* file, String* current_line
     string_clear(&value);
     for(; i < count; i++) {
         if(processing) {
-            processing = string_append_string(&value, files + i) && string_append_cstr(&value, "|");
+            processing = string_append_string(&value, files + i);
+            if (processing) {
+                if(string_get(&value, string_size(&value) - 1) == '\n')
+                    string_resize(&value, string_size(&value) - 1, ' ');
+                    
+                processing = string_append_cstr(&value, "|");
+            }
         }
         string_free_resources(files + i);
     }
 
+    if (processing)
+        processing = string_append_string(&value, ctx->new_file);
+
     end:
         if(processing)
-            fprintf(file, "%s\n", string_data(&value));
+            fprintf(file, "%s=%s\n", attrib, string_data(&value));
         else
             fprintf(file, "%s\n", string_data(current_line));
         string_free_resources(&fname);
@@ -1818,7 +1831,11 @@ static void log_file_archive_impl(
         if(was_open)
             fclose(file->file);
 
-        rename(string_data(&file->name), string_data(&log_file_name));
+        int rename_result = rename(string_data(&file->name), string_data(&log_file_name));
+        if (rename_result < 0) {
+            char* error = strerror(errno);
+            printf("Failed to rename file: %s", error);
+        }
 
         if(was_open) {
             file->file = fopen(string_data(&file->name), "w+");
@@ -1826,8 +1843,11 @@ static void log_file_archive_impl(
                 goto end;
         }
 
-        if(ctx->archive_timing == FILE_ARCHIVE_NUMBER_SEQUENCE)
+        if(ctx->archive_numbering == FILE_ARCHIVE_NUMBER_SEQUENCE)
             file->sequence++;
+
+        if(ctx->archive_timing != FILE_ARCHIVE_NONE && ctx->archive_timing != FILE_ARCHIVE_SIZE)
+            file->creation_time = *localtime(&t);
 
         if(ctx->archive_numbering != FILE_ARCHIVE_NUMBER_NONE)
             log_file_delete_old_archives(ctx, file, &log_file_name, &archive_file_pattern, t);
@@ -1976,8 +1996,10 @@ static void log_file_log(enum LogLevel log_level, const char* file, const char* 
     fprintf(log_file->file, "%s\n", string_data(msg));
 
 
-    if(!ctx->keep_files_open)
+    if (!ctx->keep_files_open) {
         fclose(log_file->file);
+        log_file->file = NULL;
+    }
 
     log_file_archive_if_needed(ctx, log_file, log_level, file, function, line, msg);
 }

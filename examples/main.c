@@ -1,9 +1,22 @@
 #include "../include/mist_log.h"
 
+#include <process.h>
+#include <Windows.h>
+
+bool running = true;
+
+static void log_periodically(void* ctx) {
+    Logger* logger = ctx;
+    while(running) {
+        log_info(logger, "Running...");
+        Sleep(5000);
+    }
+}
+
 int main(void) {
     puts("Starting");
 
-    const char* format = "${time:format=%X} | ${level} | ${message}";
+    const char* format = "${time:format=%x %r} | ${level} | ${message}";
     Logger* logger = NULL;
     LogTarget* console = NULL;
     LogTarget* file = NULL;
@@ -27,6 +40,12 @@ int main(void) {
         return EXIT_FAILURE;
     }
 
+    log_file_target_context_archive_fname(file_ctx, "examples.archive.log");
+    log_file_target_archive_on_date(file_ctx, FILE_ARCHIVE_MINUTE);
+    log_file_target_context_archive_number_sequence(file_ctx);
+    // log_file_target_context_archive_number_date(file_ctx, "%g%m%e%M");
+    log_file_target_context_set_max_archive_files(file_ctx, 2);
+
     file = log_target_file_create(format, LOG_TRACE, LOG_FATAL, file_ctx);
     if(!file) {
         log_logger_free(logger);
@@ -48,10 +67,13 @@ int main(void) {
         return EXIT_FAILURE;
     }
 
-    log_debug(logger, "This is a simple debug message.");
-    log_info(logger, "This is a formatted message: %d", 152);
+    uintptr_t handle = _beginthread(log_periodically, 0, logger);
 
-    // log_logger_free(logger);
+    puts("Press any key to exit...");
+    getchar();
+    running = false;
+
+    log_logger_free(logger);
 
     puts("Finished");
 

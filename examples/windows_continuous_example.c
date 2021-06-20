@@ -14,7 +14,6 @@ static void log_periodically(void* ctx) {
 }
 
 int main(void) {
-    puts("Starting");
 
     const char* format = "${time:format=%x %r} | ${level} | ${message}";
     Logger* logger = NULL;
@@ -43,7 +42,6 @@ int main(void) {
     log_file_target_context_archive_fname(file_ctx, "examples.archive.log");
     log_file_target_archive_on_date(file_ctx, FILE_ARCHIVE_MINUTE);
     log_file_target_context_archive_number_sequence(file_ctx);
-    // log_file_target_context_archive_number_date(file_ctx, "%g%m%e%M");
     log_file_target_context_set_max_archive_files(file_ctx, 2);
 
     file = log_target_file_create(format, LOG_TRACE, LOG_FATAL, file_ctx);
@@ -74,8 +72,6 @@ int main(void) {
     running = false;
 
     log_logger_free(logger);
-
-    puts("Finished");
 
     return EXIT_SUCCESS;
 }

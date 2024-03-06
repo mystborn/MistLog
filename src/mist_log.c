@@ -25,6 +25,18 @@
 
 #endif
 
+static void* (*log_malloc)(size_t size) = malloc;
+static void* (*log_realloc)(void* ptr, size_t size) = realloc;
+static void* (*log_calloc)(size_t count, size_t size) = calloc;
+static void (*log_free)(void* ptr) = free;
+
+LOG_EXPORT void mist_log_set_allocation_functions(void* (*log_malloc_fn)(size_t), void* (*log_realloc_fn)(void*, size_t), void* (*log_calloc_fn)(size_t, size_t), void (*log_free_fn)(void*)) {
+    log_malloc = log_malloc_fn;
+    log_realloc = log_realloc_fn;
+    log_calloc = log_calloc_fn;
+    log_free = log_free_fn;
+}
+
 struct LogFormatTime {
     String format;
     bool is_utc;
@@ -166,7 +178,7 @@ static bool log_format_level(enum LogLevel log_level, const char* file, const ch
 }
 
 static struct LogLayoutRenderer* log_renderer_create_level(char* text, size_t start, size_t count, void* ctx) {
-    struct LogLayoutRenderer* renderer = malloc(sizeof(*renderer));
+    struct LogLayoutRenderer* renderer = log_malloc(sizeof(*renderer));
     if(!renderer)
         return NULL;
 
@@ -178,7 +190,7 @@ static struct LogLayoutRenderer* log_renderer_create_level(char* text, size_t st
 }
 
 static struct LogLayoutRendererCreator* log_layout_renderer_creator_level() {
-    struct LogLayoutRendererCreator* creator = malloc(sizeof(*creator));
+    struct LogLayoutRendererCreator* creator = log_malloc(sizeof(*creator));
     if(!creator)
         return NULL;
 
@@ -195,7 +207,7 @@ static bool log_format_text(enum LogLevel log_level, const char* file, const cha
 }
 
 static void log_format_text_free(void* ctx) {
-    free(ctx);
+    log_free(ctx);
 }
 
 static bool log_format_date_time(enum LogLevel log_level, const char* file, const char* function, uint32_t line, String* message, void *ctx, char* format, va_list args) {
@@ -245,20 +257,20 @@ static bool log_format_date_time(enum LogLevel log_level, const char* file, cons
 static log_format_date_time_free(void* ctx) {
     struct LogFormatTime* format_time = ctx;
     string_free_resources(&format_time->format);
-    free(format_time);
+    log_free(format_time);
 }
 
 static struct LogLayoutRenderer* log_renderer_create_date_time(char* text, size_t start, size_t count, void* ctx) {
     String arg_name = string_create("");
     String arg_value = string_create("");
 
-    struct LogFormatTime* format_time = calloc(1, sizeof(*format_time));
+    struct LogFormatTime* format_time = log_calloc(1, sizeof(*format_time));
     if(!format_time)
         goto error;
 
     string_init(&format_time->format, "");
 
-    struct LogLayoutRenderer* renderer = malloc(sizeof(*renderer));
+    struct LogLayoutRenderer* renderer = log_malloc(sizeof(*renderer));
     if(!renderer)
         goto error;
 
@@ -310,11 +322,11 @@ static struct LogLayoutRenderer* log_renderer_create_date_time(char* text, size_
     error:
         if(format_time != NULL) {
             string_free_resources(&format_time->format); 
-            free(format_time);
+            log_free(format_time);
         }
 
         if(renderer) {
-            free(renderer);
+            log_free(renderer);
         }
 
         string_free_resources(&arg_name);
@@ -324,7 +336,7 @@ static struct LogLayoutRenderer* log_renderer_create_date_time(char* text, size_
 }
 
 static struct LogLayoutRendererCreator* log_layout_renderer_creator_date_time() {
-    struct LogLayoutRendererCreator* creator = malloc(sizeof(*creator));
+    struct LogLayoutRendererCreator* creator = log_malloc(sizeof(*creator));
     if(!creator)
         return NULL;
 
@@ -341,17 +353,17 @@ static bool log_format_counter(enum LogLevel log_level, const char* file, const 
 }
 
 static void log_format_counter_free(void* ctx) {
-    free(ctx);
+    log_free(ctx);
 }
 
 static struct LogLayoutRenderer* log_renderer_create_counter(char* text, size_t start, size_t count, void* ctx) {
-    struct LogLayoutRenderer* renderer = malloc(sizeof(*renderer));
+    struct LogLayoutRenderer* renderer = log_malloc(sizeof(*renderer));
     if(!renderer)
         return NULL;
 
-    uint32_t* counter = malloc(sizeof(*counter));
+    uint32_t* counter = log_malloc(sizeof(*counter));
     if(!counter) {
-        free(renderer);
+        log_free(renderer);
         return NULL;
     }
 
@@ -364,7 +376,7 @@ static struct LogLayoutRenderer* log_renderer_create_counter(char* text, size_t 
 }
 
 static struct LogLayoutRendererCreator* log_layout_renderer_creator_counter() {
-    struct LogLayoutRendererCreator* creator = malloc(sizeof(*creator));
+    struct LogLayoutRendererCreator* creator = log_malloc(sizeof(*creator));
     if(!creator)
         return NULL;
 
@@ -381,7 +393,7 @@ static bool log_format_file(enum LogLevel log_level, const char* file, const cha
 }
 
 static struct LogLayoutRenderer* log_renderer_create_file(char* text, size_t start, size_t count, void* ctx) {
-    struct LogLayoutRenderer* renderer = malloc(sizeof(*renderer));
+    struct LogLayoutRenderer* renderer = log_malloc(sizeof(*renderer));
     if(!renderer)
         return NULL;
     
@@ -393,7 +405,7 @@ static struct LogLayoutRenderer* log_renderer_create_file(char* text, size_t sta
 }
 
 static struct LogLayoutRendererCreator* log_layout_renderer_creator_file() {
-    struct LogLayoutRendererCreator* creator = malloc(sizeof(*creator));
+    struct LogLayoutRendererCreator* creator = log_malloc(sizeof(*creator));
     if(!creator)
         return NULL;
 
@@ -410,7 +422,7 @@ static bool log_format_function(enum LogLevel log_level, const char* file, const
 }
 
 static struct LogLayoutRenderer* log_renderer_create_function(char* text, size_t start, size_t count, void* ctx) {
-    struct LogLayoutRenderer* renderer = malloc(sizeof(*renderer));
+    struct LogLayoutRenderer* renderer = log_malloc(sizeof(*renderer));
     if(!renderer)
         return NULL;
     
@@ -422,7 +434,7 @@ static struct LogLayoutRenderer* log_renderer_create_function(char* text, size_t
 }
 
 static struct LogLayoutRendererCreator* log_layout_renderer_creator_function() {
-    struct LogLayoutRendererCreator* creator = malloc(sizeof(*creator));
+    struct LogLayoutRendererCreator* creator = log_malloc(sizeof(*creator));
     if(!creator)
         return NULL;
 
@@ -439,7 +451,7 @@ static bool log_format_line(enum LogLevel log_level, const char* file, const cha
 }
 
 static struct LogLayoutRenderer* log_renderer_create_line(char* text, size_t start, size_t count, void* ctx) {
-    struct LogLayoutRenderer* renderer = malloc(sizeof(*renderer));
+    struct LogLayoutRenderer* renderer = log_malloc(sizeof(*renderer));
     if(!renderer)
         return NULL;
     
@@ -451,7 +463,7 @@ static struct LogLayoutRenderer* log_renderer_create_line(char* text, size_t sta
 }
 
 static struct LogLayoutRendererCreator* log_layout_renderer_creator_line() {
-    struct LogLayoutRendererCreator* creator = malloc(sizeof(*creator));
+    struct LogLayoutRendererCreator* creator = log_malloc(sizeof(*creator));
     if(!creator)
         return NULL;
 
@@ -475,7 +487,7 @@ static bool log_format_message(enum LogLevel log_level, const char* file, const 
 }
 
 static struct LogLayoutRenderer* log_renderer_create_message(char* text, size_t start, size_t count, void* ctx) {
-    struct LogLayoutRenderer* renderer = malloc(sizeof(*renderer));
+    struct LogLayoutRenderer* renderer = log_malloc(sizeof(*renderer));
     if(!renderer)
         return NULL;
     
@@ -487,7 +499,7 @@ static struct LogLayoutRenderer* log_renderer_create_message(char* text, size_t 
 }
 
 static struct LogLayoutRendererCreator* log_layout_renderer_creator_message() {
-    struct LogLayoutRendererCreator* creator = malloc(sizeof(*creator));
+    struct LogLayoutRendererCreator* creator = log_malloc(sizeof(*creator));
     if(!creator)
         return NULL;
 
@@ -506,7 +518,7 @@ static bool log_format_finder_init() {
     size_t capacity = 16;
     size_t count = 0;
 
-    log_renderer_finder.registered_creators = calloc(capacity, sizeof(*log_renderer_finder.registered_creators));
+    log_renderer_finder.registered_creators = log_calloc(capacity, sizeof(*log_renderer_finder.registered_creators));
 
 
     if(!log_renderer_finder.registered_creators)
@@ -551,15 +563,15 @@ static bool log_format_finder_init() {
             struct LogLayoutRendererCreator* creator = log_renderer_finder.registered_creators[i];
             if(creator->free != NULL)
                 creator->free(creator->ctx);
-            free(creator);
+            log_free(creator);
         }
 
-        free(log_renderer_finder.registered_creators);
+        log_free(log_renderer_finder.registered_creators);
         return false;
 }
 
 LOG_EXPORT bool mist_log_register_log_format_creator(const char* name, struct LogLayoutRenderer* (*create)(char* text, size_t start, size_t count, void* ctx), void* ctx, void (*free)(void* ctx)) {
-    struct LogLayoutRendererCreator* creator = malloc(sizeof(*creator));
+    struct LogLayoutRendererCreator* creator = log_malloc(sizeof(*creator));
     if(!creator)
         return false;
 
@@ -570,9 +582,9 @@ LOG_EXPORT bool mist_log_register_log_format_creator(const char* name, struct Lo
 
     if(log_renderer_finder.count == log_renderer_finder.capacity) {
         size_t capacity = log_renderer_finder.capacity * 2;
-        void* buffer = realloc(log_renderer_finder.registered_creators, sizeof(*log_renderer_finder.registered_creators));
+        void* buffer = log_realloc(log_renderer_finder.registered_creators, sizeof(*log_renderer_finder.registered_creators));
         if(!buffer) {
-            free(creator);
+            log_free(creator);
             return false;
         }
         log_renderer_finder.registered_creators = buffer;
@@ -617,7 +629,7 @@ static struct LogLayoutRenderer* mist_log_create_text_renderer(char* format, siz
         string_free(part);
         return NULL;
     }
-    struct LogLayoutRenderer* step = malloc(sizeof(*step));
+    struct LogLayoutRenderer* step = log_malloc(sizeof(*step));
     if(!step) {
         string_free(part);
         return NULL;
@@ -640,7 +652,7 @@ struct LogFormat* mist_log_parse_format(char* format, size_t start, size_t count
     // "${time:utc=true:format=%x %X} | ${upper:inner=${level}} ${level} | ${file} | ${message}";
     size_t capacity = 2;
     size_t renderer_count = 0;
-    struct LogLayoutRenderer** renderers = malloc(sizeof(*renderers) * capacity);
+    struct LogLayoutRenderer** renderers = log_malloc(sizeof(*renderers) * capacity);
     if(!renderers)
         goto error;
 
@@ -658,7 +670,7 @@ struct LogFormat* mist_log_parse_format(char* format, size_t start, size_t count
                 // Resize the renderers list if the capacity has been reached.
                 if(renderer_count == capacity) {
                     capacity *= 2;
-                    void* buffer = realloc(renderers, sizeof(*renderers) * capacity);
+                    void* buffer = log_realloc(renderers, sizeof(*renderers) * capacity);
                     if(!buffer)
                         goto error;
                     renderers = buffer;
@@ -692,7 +704,7 @@ struct LogFormat* mist_log_parse_format(char* format, size_t start, size_t count
                         // Resize the renderers list if the capacity has been reached.
                         if(renderer_count == capacity) {
                             capacity *= 2;
-                            void* buffer = realloc(renderers, sizeof(*renderers) * capacity);
+                            void* buffer = log_realloc(renderers, sizeof(*renderers) * capacity);
                             if(!buffer)
                                 goto error;
                             renderers = buffer;
@@ -715,7 +727,7 @@ struct LogFormat* mist_log_parse_format(char* format, size_t start, size_t count
         // Resize the renderers list if the capacity has been reached.
         if(renderer_count == capacity) {
             capacity *= 2;
-            void* buffer = realloc(renderers, sizeof(*renderers) * capacity);
+            void* buffer = log_realloc(renderers, sizeof(*renderers) * capacity);
             if(!buffer)
                 goto error;
             renderers = buffer;
@@ -728,7 +740,7 @@ struct LogFormat* mist_log_parse_format(char* format, size_t start, size_t count
     }
 
     // Create the actual log format structure that will contain the layout renderers.
-    struct LogFormat* log_format = malloc(sizeof(*log_format));
+    struct LogFormat* log_format = log_malloc(sizeof(*log_format));
     if(!log_format)
         goto error;
 
@@ -742,10 +754,10 @@ struct LogFormat* mist_log_parse_format(char* format, size_t start, size_t count
             for(int i = 0; i < renderer_count; i++) {
                 if(renderers[i]->free != NULL)
                     renderers[i]->free(renderers[i]->ctx);
-                free(renderers[i]);
+                log_free(renderers[i]);
             }
 
-            free(renderers);
+            log_free(renderers);
         }
 
         return NULL;
@@ -759,9 +771,9 @@ LOG_EXPORT void mist_log_format_free(struct LogFormat* log_format) {
         struct LogLayoutRenderer* renderer = log_format->steps[i];
         if(renderer->free)
             renderer->free(renderer->ctx);
-        free(renderer);
+        log_free(renderer);
     }
-    free(log_format);
+    log_free(log_format);
 }
 
 LOG_EXPORT bool mist_log_format(struct LogFormat* log_format, enum LogLevel level, const char* file, const char* function, uint32_t line, String* message, char* format_string, va_list args) {
@@ -777,7 +789,7 @@ LOG_EXPORT bool mist_log_format(struct LogFormat* log_format, enum LogLevel leve
 }
 
 LOG_EXPORT Logger* log_logger_create() {
-    Logger* logger = calloc(1, sizeof(*logger));
+    Logger* logger = log_calloc(1, sizeof(*logger));
     if(!logger)
         return NULL;
 
@@ -789,7 +801,7 @@ LOG_EXPORT void log_logger_free(Logger* logger) {
         log_target_free(logger->targets[i]);
     }
 
-    free(logger);
+    log_free(logger);
 }
 
 LOG_EXPORT void log_target_free(LogTarget* target) {
@@ -801,15 +813,15 @@ LOG_EXPORT void log_target_free(LogTarget* target) {
         struct LogLayoutRenderer* renderer = fmt->steps[i];
         if(renderer->free)
             renderer->free(renderer->ctx);
-        free(renderer);
+        log_free(renderer);
     }
-    free(fmt->steps);
-    free(fmt);
+    log_free(fmt->steps);
+    log_free(fmt);
 
     if(target->free)
         target->free(target->ctx);
 
-    free(target);
+    log_free(target);
 }
 
 LOG_EXPORT bool log_add_target(Logger* logger, LogTarget* target) {
@@ -818,7 +830,7 @@ LOG_EXPORT bool log_add_target(Logger* logger, LogTarget* target) {
     
     if(logger->target_count == logger->target_capacity) {
         int capacity = logger->target_capacity == 0 ? 2 : logger->target_capacity * 2;
-        void* buffer = realloc(logger->targets, sizeof(*logger->targets) * capacity);
+        void* buffer = log_realloc(logger->targets, sizeof(*logger->targets) * capacity);
         if(!buffer)
             return false;
         
@@ -921,13 +933,13 @@ static void log_console_log(enum LogLevel log_level, const char* file, const cha
 }
 
 LogTarget* log_target_console_create(const char* layout, enum LogLevel min_level, enum LogLevel max_level) {
-    LogTarget* target = malloc(sizeof(*target));
+    LogTarget* target = log_malloc(sizeof(*target));
     if(!target)
         return NULL;
 
     struct LogFormat* fmt = mist_log_parse_format(layout, 0, strlen(layout));
     if(!fmt) {
-        free(target);
+        log_free(target);
         return NULL;
     }
 
@@ -942,13 +954,13 @@ LogTarget* log_target_console_create(const char* layout, enum LogLevel min_level
 }
 
 LOG_EXPORT struct LogFileTargetContext* log_file_target_context_create(char* fname) {
-    struct LogFileTargetContext* ctx = calloc(1, sizeof(*ctx));
+    struct LogFileTargetContext* ctx = log_calloc(1, sizeof(*ctx));
     if(!ctx)
         return NULL;
 
     ctx->file_name = mist_log_parse_format(fname, 0, strlen(fname));
     if(!ctx->file_name) {
-        free(ctx);
+        log_free(ctx);
         return NULL;
     }
 
@@ -973,15 +985,15 @@ LOG_EXPORT void log_file_target_context_free(struct LogFileTargetContext* ctx) {
             if(file->file)
                 fclose(file->file);
             string_free_resources(&file->name);
-            free(file->buffer);
+            log_free(file->buffer);
         }
 
-        free(ctx->files);
+        log_free(ctx->files);
     }
 
     string_free_resources(&ctx->archive_date_format);
     
-    free(ctx);
+    log_free(ctx);
 }
 
 LOG_EXPORT bool log_file_target_context_archive_fname(struct LogFileTargetContext* ctx, char* archive_fname) {
@@ -995,7 +1007,7 @@ LOG_EXPORT bool log_file_target_context_archive_fname(struct LogFileTargetContex
 
 LOG_EXPORT bool log_file_target_context_set_buffering(struct LogFileTargetContext* ctx, size_t size, int mode) {
     if(ctx->custom_buffering && ctx->buffer_mode != _IONBF) {
-        free(ctx->buffer);
+        log_free(ctx->buffer);
         ctx->buffer = NULL;
     }
     
@@ -1006,7 +1018,7 @@ LOG_EXPORT bool log_file_target_context_set_buffering(struct LogFileTargetContex
             ctx->custom_buffering = false;
             return true;
         } else {
-            char* buffer = malloc(size);
+            char* buffer = log_malloc(size);
             if(!buffer)
                 return false;
 
@@ -1051,7 +1063,7 @@ LOG_EXPORT bool log_file_target_context_keep_files_open(struct LogFileTargetCont
     ctx->keep_files_open = true;
 
     int capacity = 2;
-    ctx->files = malloc(sizeof(*ctx->files) * capacity);
+    ctx->files = log_malloc(sizeof(*ctx->files) * capacity);
     if(!ctx->files)
         return false;
 
@@ -1126,7 +1138,7 @@ static bool log_file_info_attribute(struct LogFile* file, char* attrib, String* 
         }
     }
 
-    free(line);
+    log_free(line);
     string_free_resources(&log_info);
     fclose(log_info_file);
     return result;
@@ -1187,7 +1199,7 @@ static bool log_file_info_attribute(struct LogFile* file, char* attrib, String* 
             string_free_resources(lines + i);
         }
 
-        free(lines);
+        log_free(lines);
         string_free_resources(&log_info);
         string_free_resources(&file_contents);
         fclose(log_info_file);
@@ -1292,7 +1304,7 @@ static bool log_file_info_handle_attribute(
         result = remove(string_data(&log_info)) == 0 && rename(string_data(&temp_name), string_data(&log_info)) == 0;
 
     // free the remaining resources.
-    free(line);
+    log_free(line);
     string_free_resources(&log_info);
     string_free_resources(&temp_name);
     return result;
@@ -1374,7 +1386,7 @@ static bool log_file_info_handle_attribute(
             handle_attrib(log_info_file, NULL, attrib, ctx);
         }
 
-        free(lines);
+        log_free(lines);
         string_free_resources(&log_info);
         fclose(log_info_file);
 
@@ -1504,7 +1516,7 @@ static struct LogFile* log_file_open(struct LogFileTargetContext* ctx, String* f
 
     if(ctx->files_count == ctx->files_capacity) {
         size_t capacity = ctx->files_capacity == 0 ? 2 : ctx->files_capacity * 2;
-        void* buffer = realloc(ctx->files, sizeof(*ctx->files) * capacity);
+        void* buffer = log_realloc(ctx->files, sizeof(*ctx->files) * capacity);
         if(!buffer)
             return NULL;
         
@@ -1630,7 +1642,7 @@ static void log_info_delete_files_on_days_impl(FILE* file, String* current_line,
 
         string_free_resources(&fname);
         string_free_resources(&value);
-        free(files);
+        log_free(files);
 }
 
 static void log_info_delete_files_on_count_impl(FILE* file, String* current_line, char* attrib, void* ptr) {
@@ -1689,7 +1701,7 @@ static void log_info_delete_files_on_count_impl(FILE* file, String* current_line
             fprintf(file, "%s\n", string_data(current_line));
         string_free_resources(&fname);
         string_free_resources(&value);
-        free(files);
+        log_free(files);
 }
 
 static bool log_info_delete_files_on_days(struct LogFile* file, struct LogArchiveDeleteContext* ctx) {
@@ -2005,13 +2017,13 @@ static void log_file_log(enum LogLevel log_level, const char* file, const char* 
 }
 
 LOG_EXPORT LogTarget* log_target_file_create(const char* layout, enum LogLevel min_level, enum LogLevel max_level, struct LogFileTargetContext* ctx) {
-    LogTarget* target = malloc(sizeof(*target));
+    LogTarget* target = log_malloc(sizeof(*target));
     if(!target)
         return NULL;
 
     struct LogFormat* fmt = mist_log_parse_format(layout, 0, strlen(layout));
     if(!fmt) {
-        free(target);
+        log_free(target);
         return NULL;
     }
 

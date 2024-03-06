@@ -214,6 +214,8 @@ LOG_EXPORT bool log_file_target_context_keep_files_open(struct LogFileTargetCont
 
 LOG_EXPORT LogTarget* log_target_file_create(const char* layout, enum LogLevel min_level, enum LogLevel max_level, struct LogFileTargetContext* ctx);
 
+LOG_EXPORT void mist_log_set_allocation_functions(void* (*log_malloc_fn)(size_t), void* (*log_realloc_fn)(void*, size_t), void* (*log_calloc_fn)(size_t, size_t), void (*log_free_fn)(void*));
+
 /**
  * Registers a custom LogLayoutRenderer.
  * 
